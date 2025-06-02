@@ -15,47 +15,59 @@
 # This file contains content licensed by https://github.com/chaiyujin/glow-pytorch/blob/master/LICENSE
 
 
-import functools
+# sdflow/conditional_net/RRDBNet.py
+
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-import conditional_net.module_util as mutil
-# import module_util as mutil
 
+# condtional_net を直接参照している行を修正
+from . import module_util as mutil
+from torch.nn import Conv2d
+from torch.nn import LeakyReLU
+from torch.nn import BatchNorm2d
+from torch.nn import Upsample
+from torch.nn import Sequential
+from torch.nn import Module
 
-class ResidualDenseBlock5C(nn.Module):
-    def __init__(self, nf=64, gc=32, bias=True):
-        super(ResidualDenseBlock5C, self).__init__()
-        self.conv1 = nn.Conv2d(nf, gc, 3, 1, 1, bias=bias)
-        self.conv2 = nn.Conv2d(nf + gc, gc, 3, 1, 1, bias=bias)
-        self.conv3 = nn.Conv2d(nf + 2 * gc, gc, 3, 1, 1, bias=bias)
-        self.conv4 = nn.Conv2d(nf + 3 * gc, gc, 3, 1, 1, bias=bias)
-        self.conv5 = nn.Conv2d(nf + 4 * gc, nf, 3, 1, 1, bias=bias)
-        self.lrelu = nn.LeakyReLU(negative_slope=0.2, inplace=True)
-
-        mutil.initialize_weights([self.conv1, self.conv2, self.conv3, self.conv4, self.conv5], 0.1)
+class ResidualDenseBlock(nn.Module):
+    def __init__(self, in_channels, growth_channels=32):
+        super(ResidualDenseBlock, self).__init__()
+        self.conv1 = Conv2d(in_channels, growth_channels, kernel_size=3, padding=1)
+        self.lrelu1 = LeakyReLU(negative_slope=0.2, inplace=True)
+        self.conv2 = Conv2d(in_channels + growth_channels, growth_channels, kernel_size=3, padding=1)
+        self.lrelu2 = LeakyReLU(negative_slope=0.2, inplace=True)
+        self.conv3 = Conv2d(in_channels + 2 * growth_channels, growth_channels, kernel_size=3, padding=1)
+        self.lrelu3 = LeakyReLU(negative_slope=0.2, inplace=True)
+        self.conv4 = Conv2d(in_channels + 3 * growth_channels, growth_channels, kernel_size=3, padding=1)
+        self.lrelu4 = LeakyReLU(negative_slope=0.2, inplace=True)
+        self.conv5 = Conv2d(in_channels + 4 * growth_channels, in_channels, kernel_size=3, padding=1)
+        self.scale = 0.2  # 係数
 
     def forward(self, x):
-        x1 = self.lrelu(self.conv1(x))
-        x2 = self.lrelu(self.conv2(torch.cat((x, x1), 1)))
-        x3 = self.lrelu(self.conv3(torch.cat((x, x1, x2), 1)))
-        x4 = self.lrelu(self.conv4(torch.cat((x, x1, x2, x3), 1)))
-        x5 = self.conv5(torch.cat((x, x1, x2, x3, x4), 1))
-        return x5 * 0.2 + x
+        x1 = self.lrelu1(self.conv1(x))
+        x2 = self.lrelu2(self.conv2(torch.cat((x, x1), dim=1)))
+        x3 = self.lrelu3(self.conv3(torch.cat((x, x1, x2), dim=1)))
+        x4 = self.lrelu4(self.conv4(torch.cat((x, x1, x2, x3), dim=1)))
+        x5 = self.conv5(torch.cat((x, x1, x2, x3, x4), dim=1))
+        return x + x5 * self.scale
 
-
-class RRDB(nn.Module):
-    def __init__(self, nf, gc=32):
+class RRDB(Module):
+    """
+    Residual in Residual Dense Block for conditional network
+    """
+    def __init__(self, in_channels, growth_channels=32, num_blocks=3):
         super(RRDB, self).__init__()
-        self.RDB1 = ResidualDenseBlock5C(nf, gc)
-        self.RDB2 = ResidualDenseBlock5C(nf, gc)
-        self.RDB3 = ResidualDenseBlock5C(nf, gc)
+        self.rdb_1 = ResidualDenseBlock(in_channels, growth_channels)
+        self.rdb_2 = ResidualDenseBlock(in_channels, growth_channels)
+        self.rdb_3 = ResidualDenseBlock(in_channels, growth_channels)
+        self.scale = 0.2
 
     def forward(self, x):
-        out = self.RDB1(x)
-        out = self.RDB2(out)
-        out = self.RDB3(out)
-        return out * 0.2 + x
+        out = self.rdb_1(x)
+        out = self.rdb_2(out)
+        out = self.rdb_3(out)
+        return x + out * self.scale
+
 
 
 class RRDBNet(nn.Module):

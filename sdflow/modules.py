@@ -5,8 +5,16 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.distributed as dist
 from scipy import linalg as la
-import conditional_net.module_util as mutil
-from conditional_net.RRDBNet import RRDB
+
+# =========================
+# 変更箇所: 以下2行を修正しました。
+#   - 元は "import conditional_net.module_util as mutil"
+#   -      "from conditional_net.RRDBNet import RRDB"
+#   ↓ 修正後:
+from sdflow.conditional_net import module_util as mutil
+from sdflow.conditional_net.RRDBNet import RRDB
+# =========================
+
 import ops
 from einops import rearrange, reduce
 
