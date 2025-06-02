@@ -15,7 +15,8 @@ from sdflow.conditional_net import module_util as mutil
 from sdflow.conditional_net.RRDBNet import RRDB
 # =========================
 
-import ops
+from sdflow import ops
+
 from einops import rearrange, reduce
 
 
