@@ -1,17 +1,23 @@
-###############################################################
 # model.py
-###############################################################
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-# sdflow パッケージ内のモジュールを相対パスでインポート
+# ① Glow/RealNVPベースの FlowStep/Flow を sdflow からインポート
 from sdflow.modules.glow import FlowStep, Flow
+
+# ② ActNorm, InvConv, AffineCoupling を sdflow.modules からインポート
 from sdflow.modules.ops import ActNorm, InvConv
 from sdflow.modules.coupling import AffineCoupling
-# conditional_net は sdflow/conditional_net 以下にあるため、sdflow.conditional_net と指定
+
+# ③ 条件付きフロー用のネットワーク（RRDB や module_util）を sdflow.conditional_net 経由でインポート
 from sdflow.conditional_net import module_util as mutil
 from sdflow.conditional_net.RRDBNet import RRDB
+
+################################################################################
+# 以下、HRFlow, LRFlow, HFFlow, DegFlow, SDFlowModel, 判別器クラスなどの定義が続きます
+################################################################################
 
 class HRFlow(nn.Module):
     def __init__(self, in_channels=1, hidden_channels=64, n_levels=3, n_flow_steps=4):
@@ -26,6 +32,7 @@ class HRFlow(nn.Module):
         else:
             return self.flow(z, reverse=True)
 
+
 class LRFlow(nn.Module):
     def __init__(self, in_channels=1, hidden_channels=64, n_levels=3, n_flow_steps=4):
         super(LRFlow, self).__init__()
@@ -39,9 +46,11 @@ class LRFlow(nn.Module):
         else:
             return self.flow(z, reverse=True)
 
+
 class HFFlow(nn.Module):
     def __init__(self, z_c_channels=32, z_h_channels=32, n_blocks=8):
         super(HFFlow, self).__init__()
+        # RRDB を条件ネットワークとして使う
         self.condition_net = self._make_rrdb(n_blocks, in_channels=z_c_channels)
         self.flow = Flow(z_h_channels * 2, z_h_channels, 1, 2)
 
@@ -58,11 +67,13 @@ class HFFlow(nn.Module):
             z, logdet = self.flow(inp)
             return z, logdet
         else:
-            mean = torch.zeros_like(z_c)
+            batch = z_c.size(0)
+            mean = torch.zeros((batch, z_h.size(1), z_h.size(2), z_h.size(3)), device=z_c.device)
             eps = torch.randn_like(mean) * temp
             z_prior = mean + eps
             inp = torch.cat([z_prior, cond], dim=1)
             return self.flow(inp, reverse=True)
+
 
 class DegFlow(nn.Module):
     def __init__(self, z_c_channels=32, z_d_channels=32, n_blocks=4, n_components=16):
@@ -94,6 +105,7 @@ class DegFlow(nn.Module):
             inp = torch.cat([z_prior, cond], dim=1)
             return self.flow(inp, reverse=True)
 
+
 class SDFlowModel(nn.Module):
     def __init__(self):
         super(SDFlowModel, self).__init__()
@@ -124,6 +136,8 @@ class SDFlowModel(nn.Module):
         z = torch.cat([z_c_hr, z_d], dim=1)
         return self.lr_flow(None, reverse=True, z=z)
 
+
+# ■■ 画像判別器 / 潜在判別器 の定義 ■■
 class HRDiscriminator(nn.Module):
     def __init__(self, in_channels=1):
         super(HRDiscriminator, self).__init__()
@@ -138,6 +152,7 @@ class HRDiscriminator(nn.Module):
 
     def forward(self, x):
         return self.model(x)
+
 
 class LRDiscriminator(nn.Module):
     def __init__(self, in_channels=1):
@@ -154,6 +169,7 @@ class LRDiscriminator(nn.Module):
     def forward(self, x):
         return self.model(x)
 
+
 class LatentDiscriminator(nn.Module):
     def __init__(self, in_channels=32):
         super(LatentDiscriminator, self).__init__()
@@ -169,99 +185,3 @@ class LatentDiscriminator(nn.Module):
 
     def forward(self, z_c):
         return self.model(z_c)
-
-###############################################################
-# loss.py
-###############################################################
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from torchvision import models
-
-
-def gaussian_logprob(z, mean, logvar):
-    return -0.5 * (logvar + ((z - mean) ** 2) / torch.exp(logvar) + torch.log(torch.tensor(2 * torch.pi)))
-
-class LikelihoodLoss(nn.Module):
-    def __init__(self):
-        super(LikelihoodLoss, self).__init__()
-
-    def hr_loss(self, z_h, logdet):
-        mean = torch.zeros_like(z_h)
-        logvar = torch.zeros_like(z_h)
-        log_p = gaussian_logprob(z_h, mean, logvar).sum(dim=[1, 2, 3])
-        return - (log_p + logdet).mean()
-
-    def lr_loss(self, z_d, logdet):
-        mean = torch.zeros_like(z_d)
-        logvar = torch.zeros_like(z_d)
-        log_p = gaussian_logprob(z_d, mean, logvar).sum(dim=[1, 2, 3])
-        return - (log_p + logdet).mean()
-
-class PixelLoss(nn.Module):
-    def __init__(self):
-        super(PixelLoss, self).__init__()
-        self.criterion = nn.MSELoss()
-
-    def forward(self, pred, target):
-        return self.criterion(pred, target)
-
-class PerceptualLoss(nn.Module):
-    def __init__(self, layer_idx=21):
-        super(PerceptualLoss, self).__init__()
-        vgg = models.vgg19(pretrained=True).features
-        self.feature_extractor = nn.Sequential(*list(vgg.children())[:layer_idx]).eval()
-        for param in self.feature_extractor.parameters():
-            param.requires_grad = False
-
-    def forward(self, pred, target):
-        feat_pred = self.feature_extractor(pred.repeat(1, 3, 1, 1))
-        feat_target = self.feature_extractor(target.repeat(1, 3, 1, 1))
-        return F.mse_loss(feat_pred, feat_target)
-
-class AdversarialLoss(nn.Module):
-    def __init__(self):
-        super(AdversarialLoss, self).__init__()
-        self.mse = nn.MSELoss()
-
-    def discriminator_loss_image(self, D, real, fake):
-        real_pred = D(real)
-        fake_pred = D(fake)
-        loss_real = self.mse(real_pred, torch.ones_like(real_pred))
-        loss_fake = self.mse(fake_pred, torch.zeros_like(fake_pred))
-        return (loss_real + loss_fake) * 0.5
-
-    def generator_loss_image(self, D, fake):
-        fake_pred = D(fake)
-        return self.mse(fake_pred, torch.ones_like(fake_pred))
-
-    def discriminator_loss_latent(self, D, z_c_hr, z_c_lr):
-        real_pred = D(z_c_hr)
-        fake_pred = D(z_c_lr)
-        loss_real = self.mse(real_pred, torch.ones_like(real_pred))
-        loss_fake = self.mse(fake_pred, torch.zeros_like(fake_pred))
-        return (loss_real + loss_fake) * 0.5
-
-    def generator_loss_latent(self, D, z_c_hr, z_c_lr):
-        pred_hr = D(z_c_hr)
-        pred_lr = D(z_c_lr)
-        loss_hr = self.mse(pred_hr, torch.zeros_like(pred_hr))
-        loss_lr = self.mse(pred_lr, torch.ones_like(pred_lr))
-        return (loss_hr + loss_lr) * 0.5
-
-class ContentLoss(nn.Module):
-    def __init__(self):
-        super(ContentLoss, self).__init__()
-        vgg = models.vgg19(pretrained=True).features[:23].eval()
-        for param in vgg.parameters():
-            param.requires_grad = False
-        self.vgg = vgg
-        self.criterion = nn.MSELoss()
-
-    def forward(self, hr, ds_mean, z_c_hr, model):
-        hr_down = F.interpolate(hr, scale_factor=0.5, mode='bilinear', align_corners=False)
-        loss_pix = F.mse_loss(ds_mean, hr_down)
-        feat_ds = self.vgg(ds_mean.repeat(1, 3, 1, 1))
-        feat_hr_down = self.vgg(hr_down.repeat(1, 3, 1, 1))
-        loss_per = self.criterion(feat_ds, feat_hr_down)
-        return loss_pix + loss_per
