@@ -1,9 +1,9 @@
 version: '3.8'
 
 services:
-  Spica:
+  spica:
     build:
-      context: ..                      # Spica ルートをビルドコンテキストに
+      context: ..                      # NOCTUA ルートをビルドコンテキストに
       dockerfile: docker/Dockerfile    # Dockerfile の相対パス
     container_name: Spica            # コンテナ名
     shm_size: '2gb'
@@ -12,8 +12,8 @@ services:
       - .env                           # DATASET_PATH を読み込む
 
     ports:
-      - '50001:8888'   # Jupyter Notebook のホスト側ポートを50001に変更
-      - '8098:8097'    # Visdom のホスト側ポートを8098に変更
+      - '50001:8889'  # Jupyter Notebook
+      - '8098:8098'   # Visdom
 
     volumes:
       - ../:/workspace                  # NOCTUA 全体を /workspace にマウント
