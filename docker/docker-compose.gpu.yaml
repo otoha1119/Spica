@@ -1,0 +1,34 @@
+version: '3.8'
+
+
+services:
+  anovit:
+    build:
+      context: ..                     # Spica ルートをビルドコンテキストに
+      dockerfile: docker/Dockerfile   # 同じ Dockerfile
+      args:
+        REQUIREMENTS_FILE: requirements-gpu.txt  # GPU用依存指定
+    container_name: Spica          # コンテナ名
+    shm_size: '2gb'
+
+    env_file:
+      - .env
+
+    ports:
+      - '50001:8888'   # Jupyter Notebook のホスト側ポートを50001に変更
+      - '8098:8097'    # Visdom のホスト側ポートを8098に変更
+
+    volumes:
+      - ../:/workspace
+      - ${DATASET_PATH}:/workspace/DataSet
+
+    working_dir: /workspace
+    command: bash -c "jupyter notebook --allow-root --ip=0.0.0.0 --port=50001"
+
+    runtime: nvidia                   # GPU ランタイム
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: [gpu]
