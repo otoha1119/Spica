@@ -1,10 +1,10 @@
 import torch
 import torch.nn as nn
-import modules as m
+from sdflow import modules as m
 
 class FlowBlock(nn.Module):
     def __init__(self, z_channels, hidden_layers, hidden_channels, n_steps, permute='inv1x1', condition_channels=None, is_squeeze=True, squzze_type='checkboard',
-    is_expand=False, expand_type='checkboard', is_split=False, split_size=None, affine_split=0.5, with_actnorm=True):
+                 is_expand=False, expand_type='checkboard', is_split=False, split_size=None, affine_split=0.5, with_actnorm=True):
         super().__init__()
 
         self.is_squeeze = is_squeeze
@@ -77,3 +77,33 @@ class FlowBlock(nn.Module):
                 z, ldj = self.squeeze(z, ldj, reverse=True)
 
             return z, ldj
+
+# エイリアス定義: SDFlow のモデル側が期待する FlowStep と Flow をここで定義
+FlowStep = FlowBlock
+
+class Flow(nn.Module):
+    """
+    単純に複数の FlowBlock を階層的に適用するラッパークラス
+    実装は必要に応じて拡張する
+    """
+    def __init__(self, in_channels, hidden_channels, n_levels, n_flows):
+        super().__init__()
+        # ここでは簡易的に、単一レベルに n_flows 個の FlowBlock を適用する構成とする
+        blocks = []
+        z_channels = in_channels
+        for _ in range(n_flows):
+            blocks.append(FlowBlock(z_channels, hidden_layers=2, hidden_channels=hidden_channels, n_steps=1, permute='inv1x1', condition_channels=None, is_squeeze=False, is_expand=False, is_split=False))
+        self.flow = nn.Sequential(*blocks)
+
+    def forward(self, x, reverse=False):
+        ldj = torch.zeros(x.size(0), device=x.device)
+        if not reverse:
+            z = x
+            for layer in self.flow:
+                z, ldj = layer(z, ldj)
+            return z, ldj
+        else:
+            z = x
+            for layer in reversed(self.flow):
+                z, ldj = layer(z, ldj, reverse=True)
+            return z

@@ -1,28 +1,24 @@
-###############################################
-# sdflow/model_sdflow.py
-###############################################
 import torch
 import torch.nn as nn
 from sdflow.flow_block import FlowStep, Flow
-from sdflow.ops import ActNorm, InvConv
 from sdflow.modules import AffineCoupling, RRDB
 
 class HRFlow(nn.Module):
+    """HR 画像用の Glow ライクなフロー"""
     def __init__(self, in_channels=1, hidden_channels=64, n_levels=3, n_flows=4):
         super().__init__()
-        # Multi-scale Flow (Glow-like) for HR
         self.flow = Flow(in_channels, hidden_channels, n_levels, n_flows)
 
     def forward(self, x, reverse=False, z=None):
         if not reverse:
             z_out, logdet = self.flow(x)
-            # Split channels into content and HF
             z_c, z_h = torch.chunk(z_out, 2, dim=1)
             return z_c, z_h, logdet
         else:
             return self.flow(z, reverse=True)
 
 class LRFlow(nn.Module):
+    """LR 画像用の Glow ライクなフロー"""
     def __init__(self, in_channels=1, hidden_channels=64, n_levels=3, n_flows=4):
         super().__init__()
         self.flow = Flow(in_channels, hidden_channels, n_levels, n_flows)
@@ -36,6 +32,7 @@ class LRFlow(nn.Module):
             return self.flow(z, reverse=True)
 
 class HFFlow(nn.Module):
+    """高周波潜在用の条件付きフロー"""
     def __init__(self, z_c_channels=32, z_h_channels=32, n_blocks=8):
         super().__init__()
         self.condition_net = self._make_rrdb(n_blocks, z_c_channels)
@@ -54,14 +51,14 @@ class HFFlow(nn.Module):
             z_out, logdet = self.flow(inp)
             return z_out, logdet
         else:
-            # Sampling from Gaussian prior
-            shape = z_c.size(0), z_h.size(1), z_h.size(2), z_h.size(3)
+            shape = (z_c.size(0), z_h.size(1), z_h.size(2), z_h.size(3))
             eps = torch.randn(shape, device=z_c.device) * temp
             inp = torch.cat([eps, cond], dim=1)
             z_rev = self.flow(inp, reverse=True)
             return z_rev
 
 class DegFlow(nn.Module):
+    """劣化潜在用の条件付きフロー"""
     def __init__(self, z_c_channels=32, z_d_channels=32, n_blocks=4, n_components=16):
         super().__init__()
         self.condition_net = self._make_rrdb(n_blocks, z_c_channels)
@@ -93,6 +90,7 @@ class DegFlow(nn.Module):
             return z_rev
 
 class SDFlowModel(nn.Module):
+    """SDFlow全体モデル: HR/LR フロー＋HF/Deg フローを組み合わせ"""
     def __init__(self, in_channels=1, hidden_channels=64,
                  n_levels=3, n_flows=4,
                  hf_blocks=8, deg_blocks=4, deg_mixture=16):
