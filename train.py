@@ -1,6 +1,3 @@
-###############################################################
-# train.py
-###############################################################
 import os
 import argparse
 import random
@@ -29,8 +26,8 @@ from utils import (
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Train SDFlow for unpaired super-resolution")
-    parser.add_argument("--lr_root", type=str, default="D:/DataSet/ImageCAS", help="Path to LR DICOM directory")
-    parser.add_argument("--hr_root", type=str, default="D:/DataSet/photonCT/PhotonCT1024", help="Path to HR DICOM directory")
+    parser.add_argument("--lr_root", type=str, default="/workspace/DataSet/ImageCAS", help="Path to LR DICOM directory")
+    parser.add_argument("--hr_root", type=str, default="/workspace/DataSet/photonCT/PhotonCT1024", help="Path to HR DICOM directory")
     parser.add_argument("--batch_size", type=int, default=8, help="Batch size per GPU")
     parser.add_argument("--epochs", type=int, default=100, help="Number of epochs to train")
     parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate")
@@ -160,7 +157,6 @@ def main():
                 writer.add_scalar("Loss/NLL_LR", loss_nll_lr.item(), global_step)
 
                 # サンプル画像をTensorBoardに記録
-                # 1つ目のバッチのLR, SR, HR画像を可視化
                 writer.add_image("LR_Input", lr_tensor[0], global_step)
                 writer.add_image("SR_Output", sr_mean[0].detach(), global_step)
                 writer.add_image("HR_Reference", make_hr_image(lr_tensor)[0], global_step)

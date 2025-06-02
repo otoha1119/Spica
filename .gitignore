@@ -1,0 +1,17 @@
+data/Lung_dataset_original/ 
+
+# Python バイトコード
+__pycache__/
+*.py[cod]
+
+# mypy・pytest 等のキャッシュも不要なら
+.mypy_cache/
+.pytest_cache/
+
+runs/
+
+DataSet
+
+
+# ---------------- 環境ファイル ----------------
+# docker/.env
