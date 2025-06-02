@@ -29,7 +29,7 @@ def parse_args():
                         default="/workspace/DataSet/ImageCAS", help="LR DICOM directory")
     parser.add_argument("--hr_root", type=str,
                         default="/workspace/DataSet/photonCT/PhotonCT1024", help="HR DICOM directory")
-    parser.add_argument("--batch_size", type=int, default=32, help="Batch size per GPU")
+    parser.add_argument("--batch_size", type=int, default=8, help="Batch size per GPU")
     parser.add_argument("--epochs", type=int, default=50, help="Number of epochs")
     parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate for flows and discriminators")
     parser.add_argument("--output_dir", type=str, default="/workspace/checkpoints", help="Directory for checkpoints and logs")
@@ -64,7 +64,8 @@ def main():
                         deg_mixture=16).to(device)
 
     # Discriminators
-    disc_content = ContentDiscriminator(in_channels=32).to(device)
+    #disc_content = ContentDiscriminator(in_channels=32).to(device)
+    disc_content = ContentDiscriminator(in_channels=1).to(device)
     disc_hr = ImageDiscriminator(in_channels=1).to(device)
     disc_lr = ImageDiscriminator(in_channels=1).to(device)
 
@@ -111,8 +112,11 @@ def main():
             loss_nll_h = likelihood_loss(z_h, logdet_h)
             loss_nll_d = likelihood_loss(z_d, logdet_d)
 
-            # Latent adversarial loss: align z_c_hr and z_c_lr
-            loss_latent = latent_adv_loss(disc_content, z_c_hr.detach(), z_c_lr.detach())
+            
+            loss_latent_gen  = latent_adv_loss.generator_loss(disc_content, z_c_hr.detach(), z_c_lr.detach())
+            loss_latent_disc = latent_adv_loss.disc_loss(disc_content,    z_c_hr.detach(), z_c_lr.detach())
+
+
 
             # Backward generation (mean outputs)
             sr_mean = model.generate_sr(lr_patch, temp=0.0)
@@ -135,15 +139,26 @@ def main():
             loss_adv_lr = image_adv_loss(disc_lr, real=lr_patch, fake=ds_rand)
 
             # Total generator (flow) loss
+            # loss_G = (
+            #     loss_nll_h + loss_nll_d
+            #     + 0.05 * loss_latent
+            #     + 0.5 * (loss_pix_sr + loss_per_sr + loss_pix_ds + loss_per_ds)
+            #     + 0.1 * (loss_adv_hr + loss_adv_lr)
+            # )
+            
             loss_G = (
                 loss_nll_h + loss_nll_d
-                + 0.05 * loss_latent
+                + 0.05 * loss_latent_gen
                 + 0.5 * (loss_pix_sr + loss_per_sr + loss_pix_ds + loss_per_ds)
                 + 0.1 * (loss_adv_hr + loss_adv_lr)
             )
+          
             optim_flow.zero_grad()
             loss_G.backward()
             optim_flow.step()
+            
+             #memory kaihou!!!!!!!!
+            torch.cuda.empty_cache()
 
             # -------------------------
             # Discriminator updates

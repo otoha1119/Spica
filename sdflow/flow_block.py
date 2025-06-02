@@ -1,102 +1,128 @@
 import torch
 import torch.nn as nn
-from sdflow import modules as m
+from sdflow import modules as m  # ActNorm, Inv1x1Conv2d, AffineInjector, AffineCoupling など
 
-class FlowBlock(nn.Module):
-    def __init__(self, z_channels, hidden_layers, hidden_channels, n_steps, permute='inv1x1', condition_channels=None, is_squeeze=True, squzze_type='checkboard',
-                 is_expand=False, expand_type='checkboard', is_split=False, split_size=None, affine_split=0.5, with_actnorm=True):
+class Identity(nn.Module):
+    """何もしないモジュール。チャネル数が 1 以下のときや最終ステップ用に使う"""
+    def forward(self, z, ldj, *args, reverse=False):
+        return z, ldj
+
+
+class FlowStep(nn.Module):
+    """
+    Flow の 1 つのステップ。
+    1) ActNorm → 2) Permutation(Inv1x1Conv) → 3) [AffineInjector] → 4) [AffineCoupling]
+    z_channels <= 1 のときは AffineCoupling を Identity に置き換えて 0 チャネル conv を回避する。
+    """
+    def __init__(
+        self,
+        z_channels,
+        hidden_layers,
+        hidden_channels,
+        permute='inv1x1',
+        condition_channels=None,
+        affine_split=0.5,
+        with_actnorm=True,
+        is_last=False
+    ):
         super().__init__()
+        self.is_last = is_last
+        self.z_channels = z_channels
 
-        self.is_squeeze = is_squeeze
-        self.is_expand = is_expand
-        self.is_split = is_split
-
-        assert squzze_type == expand_type
-        self.squeeze_transition = None
-        self.expand_transition = None
-        if is_squeeze:
-            if squzze_type == 'checkboard':
-                self.squeeze = m.CheckboardSqueeze()
-                self.squeeze_transition = m.TransitionBlock(z_channels * 4, with_actnorm=with_actnorm)
-            elif squzze_type == 'haar':
-                self.squeeze = m.HaarWaveletSqueeze(z_channels)
-            else:
-                raise NotImplemented('Not implemented squeeze type')
-        if is_expand:
-            if expand_type == 'checkboard':
-                self.expand = m.CheckboardExpand()
-                self.expand_transition = m.TransitionBlock(z_channels * 4 if self.is_squeeze else z_channels, with_actnorm=with_actnorm)
-            elif expand_type == 'haar':
-                self.expand = m.HaarWaveletExpand(z_channels if self.is_squeeze else z_channels // 4)
-            else:
-                raise NotImplemented('Not implemented expand type')
-
-        self.steps = nn.ModuleList()
-        if is_squeeze: z_channels = z_channels * 4
-        for _ in range(n_steps):
-            self.steps.append(m.FlowStep(z_channels, hidden_layers, hidden_channels, permute, condition_channels, affine_split=affine_split, with_actnrom=with_actnorm))
-        if is_expand: z_channels = z_channels // 4
-        if is_split:
-            self.split = m.SplitFlow(z_channels, split_size, n_resblock=8)
-    
-    def forward(self, z, ldj, tau=0, u=None, reverse=False):
-        if not reverse:
-            if self.is_squeeze:
-                z, ldj = self.squeeze(z, ldj)
-                if self.squeeze_transition:
-                    z, ldj = self.squeeze_transition(z, ldj)
-
-            for step in self.steps:
-                z, ldj = step(z, ldj, u)
-            
-            if self.is_expand:
-                if self.expand_transition:
-                    z, ldj = self.expand_transition(z, ldj)
-                z, ldj = self.expand(z, ldj)
-            
-            if self.is_split:
-                z, ldj = self.split(z, ldj, tau)
-
-            return z, ldj
-
+        # 1) ActNorm 部分
+        if with_actnorm:
+            self.actnorm = m.ActNorm(z_channels)
         else:
-            if self.is_split:
-                z, ldj = self.split(z, ldj, tau, reverse=True)
-            
-            if self.is_expand:
-                z, ldj = self.expand(z, ldj, reverse=True)
-                if self.expand_transition:
-                    z, ldj = self.expand_transition(z, ldj, reverse=True)
-            
-            for step in self.steps[::-1]:
-                z, ldj = step(z, ldj, u, reverse=True)
-            
-            if self.is_squeeze:
-                if self.squeeze_transition:
-                    z, ldj = self.squeeze_transition(z, ldj, reverse=True)
-                z, ldj = self.squeeze(z, ldj, reverse=True)
+            self.actnorm = Identity()
 
-            return z, ldj
+        # 2) Permutation 部分 (Inv1x1Conv or Identity)
+        if permute == 'inv1x1':
+            self.permute = m.Inv1x1Conv2d(z_channels)
+        else:
+            self.permute = Identity()
 
-# エイリアス定義: SDFlow のモデル側が期待する FlowStep と Flow をここで定義
-FlowStep = FlowBlock
+        # 3) AffineInjector 部分 (条件付き注入)。condition_channels があり、かつ z_channels > 0 のときのみ有効
+        if (condition_channels is not None) and (z_channels > 0):
+            self.affine_injector = m.AffineInjector(
+                z_channels, hidden_layers, hidden_channels, condition_channels
+            )
+        else:
+            self.affine_injector = Identity()
+
+        # 4) AffineCoupling 部分
+        #    - is_last=True の最後ステップ、または z_channels <= 1 のときは Identity
+        if (not self.is_last) and (z_channels > 1):
+            self.affine_coupling = m.AffineCoupling(
+                z_channels,
+                hidden_layers,
+                hidden_channels,
+                condition_channels,
+                split_ratio=affine_split
+            )
+        else:
+            self.affine_coupling = Identity()
+
+    def forward(self, z, ldj, u=None, reverse=False):
+        """
+        z:    (B, z_channels, H, W)
+        ldj:  (B,) — ログデターミナントを累積するテンソル
+        u:    条件テンソル (任意)
+        reverse: 逆フローを行うか否か
+        """
+        if not reverse:
+            # 順方向
+            z, ldj = self.actnorm(z, ldj)
+            z, ldj = self.permute(z, ldj)
+            if not isinstance(self.affine_injector, Identity):
+                z, ldj = self.affine_injector(z, ldj, u)
+            z, ldj = self.affine_coupling(z, ldj, u)
+        else:
+            # 逆方向順序
+            z, ldj = self.affine_coupling(z, ldj, u, reverse=True)
+            if not isinstance(self.affine_injector, Identity):
+                z, ldj = self.affine_injector(z, ldj, u, reverse=True)
+            z, ldj = self.permute(z, ldj, reverse=True)
+            z, ldj = self.actnorm(z, ldj, reverse=True)
+
+        return z, ldj
+
 
 class Flow(nn.Module):
     """
-    単純に複数の FlowBlock を階層的に適用するラッパークラス
-    実装は必要に応じて拡張する
+    FlowStep を n_flows 個つなげたシーケンスラッパー。
+    順方向では (z_out, ldj) を返し、逆方向では z_out のみ返す。
     """
     def __init__(self, in_channels, hidden_channels, n_levels, n_flows):
         super().__init__()
-        # ここでは簡易的に、単一レベルに n_flows 個の FlowBlock を適用する構成とする
         blocks = []
         z_channels = in_channels
-        for _ in range(n_flows):
-            blocks.append(FlowBlock(z_channels, hidden_layers=2, hidden_channels=hidden_channels, n_steps=1, permute='inv1x1', condition_channels=None, is_squeeze=False, is_expand=False, is_split=False))
+
+        for i in range(n_flows):
+            is_last = (i == n_flows - 1)
+            blocks.append(
+                FlowStep(
+                    z_channels,
+                    hidden_layers=2,
+                    hidden_channels=hidden_channels,
+                    permute='inv1x1',
+                    condition_channels=None,
+                    affine_split=0.5,
+                    with_actnorm=True,
+                    is_last=is_last
+                )
+            )
+            # FlowStep はチャネル数を変えないため z_channels はそのまま
+
         self.flow = nn.Sequential(*blocks)
 
     def forward(self, x, reverse=False):
-        ldj = torch.zeros(x.size(0), device=x.device)
+        """
+        x: (B, in_channels, H, W)
+        reverse=False → (z, ldj)、reverse=True → 画像再構築 z_out
+        """
+        batch_size = x.size(0)
+        ldj = torch.zeros(batch_size, device=x.device)
+
         if not reverse:
             z = x
             for layer in self.flow:
@@ -106,4 +132,9 @@ class Flow(nn.Module):
             z = x
             for layer in reversed(self.flow):
                 z, ldj = layer(z, ldj, reverse=True)
-            return z
+            return z  # 逆方向では ldj を返さず、画像を返す
+
+
+# model_sdflow.py が期待する名前をエクスポート
+FlowStep = FlowStep
+Flow = Flow
