@@ -1,3 +1,6 @@
+###############################################################
+# train.py
+###############################################################
 import os
 import argparse
 import random
@@ -90,8 +93,8 @@ def main():
             optimizer_G.zero_grad()
 
             # 正方向: HR->(z_c, z_h)、LR->(z_c, z_d)
-            z_c_hr, z_h, z_c_lr_from_hr, z_d_from_hr, logdet_hr = sdflow.forward_hr(hr_tensor)
-            z_c_lr, z_d, z_c_hr_from_lr, z_h_from_lr, logdet_lr = sdflow.forward_lr(lr_tensor)
+            z_c_hr, z_h, _, _, logdet_hr = sdflow.forward_hr(hr_tensor)
+            z_c_lr, z_d, _, _, logdet_lr = sdflow.forward_lr(lr_tensor)
 
             # 対数尤度損失
             loss_nll_hr = likelihood_loss.hr_loss(z_h, logdet_hr)
