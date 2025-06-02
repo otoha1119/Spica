@@ -1,34 +1,48 @@
 version: '3.8'
 
-
 services:
-  anovit:
+  Spica:
     build:
       context: ..                     # Spica ルートをビルドコンテキストに
       dockerfile: docker/Dockerfile   # 同じ Dockerfile
       args:
         REQUIREMENTS_FILE: requirements-gpu.txt  # GPU用依存指定
-    container_name: Spica          # コンテナ名
+    container_name: Spica
     shm_size: '2gb'
 
+    # 元の状態に戻した env_file 指定
     env_file:
       - .env
-
-    ports:
-      - '50001:8888'   # Jupyter Notebook のホスト側ポートを50001に変更
-      - '8098:8097'    # Visdom のホスト側ポートを8098に変更
 
     volumes:
       - ../:/workspace
       - ${DATASET_PATH}:/workspace/DataSet
 
     working_dir: /workspace
-    command: bash -c "jupyter notebook --allow-root --ip=0.0.0.0 --port=50001"
 
-    runtime: nvidia                   # GPU ランタイム
+    # Jupyter Notebook を起動する場合
+    command: bash -c "jupyter notebook --allow-root --ip=0.0.0.0 --port=50001"
+    # 学習スクリプトを自動で回したい場合は以下のように変更してください：
+    # command: bash -c "python train.py --lr_root /workspace/DataSet/ImageCAS --hr_root /workspace/DataSet/photonCT/PhotonCT1024"
+
+    # -------------------------------
+    # GPU を有効化するための指定
+    # -------------------------------
+
+    # Docker Engine v19.03 以降の場合
+    gpus: ["all"]
+
+    # 旧 Compose / Swarm モード向け
+    runtime: nvidia
+
+    # Swarm モードでも GPU を予約するための指定
     deploy:
       resources:
         reservations:
           devices:
             - driver: nvidia
               capabilities: [gpu]
+
+    # ポート設定（Jupyter 用）
+    ports:
+      - "50001:50001"

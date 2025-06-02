@@ -1,7 +1,7 @@
 version: '3.8'
 
 services:
-  anovit:
+  Spica:
     build:
       context: ..                      # Spica ルートをビルドコンテキストに
       dockerfile: docker/Dockerfile    # Dockerfile の相対パス
