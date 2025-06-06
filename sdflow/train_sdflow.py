@@ -29,7 +29,7 @@ def parse_args():
                         default="/workspace/DataSet/ImageCAS", help="LR DICOM directory")
     parser.add_argument("--hr_root", type=str,
                         default="/workspace/DataSet/photonCT/PhotonCT1024", help="HR DICOM directory")
-    parser.add_argument("--batch_size", type=int, default=8, help="Batch size per GPU")
+    parser.add_argument("--batch_size", type=int, default=4, help="Batch size per GPU")
     parser.add_argument("--epochs", type=int, default=50, help="Number of epochs")
     parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate for flows and discriminators")
     parser.add_argument("--output_dir", type=str, default="/workspace/checkpoints", help="Directory for checkpoints and logs")
@@ -58,10 +58,11 @@ def main():
                             shuffle=True, num_workers=8, pin_memory=True)
 
     # Models
-    model = SDFlowModel(in_channels=1, hidden_channels=64,
+    model = SDFlowModel(in_channels=1, hidden_channels=48,
                         n_levels=3, n_flows=4,
                         hf_blocks=8, deg_blocks=4,
-                        deg_mixture=16).to(device)
+                        deg_mixture=16,
+                        scale=args.scale).to(device)
 
     # Discriminators
     #disc_content = ContentDiscriminator(in_channels=32).to(device)
@@ -135,8 +136,8 @@ def main():
             loss_per_ds = perceptual_loss(ds_mean, bicubic_lr)
 
             # Image adversarial losses (use random outputs)
-            loss_adv_hr = image_adv_loss(disc_hr, real=hr_patch, fake=sr_rand)
-            loss_adv_lr = image_adv_loss(disc_lr, real=lr_patch, fake=ds_rand)
+            loss_adv_hr = image_adv_loss.generator_loss(disc_hr, fake=sr_rand)
+            loss_adv_lr = image_adv_loss.generator_loss(disc_lr, fake=ds_rand)
 
             # Total generator (flow) loss
             # loss_G = (

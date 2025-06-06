@@ -217,8 +217,14 @@ class Inv1x1Conv2d(nn.Module):
 
         else:
             weight = self.calc_weight()
-            z = F.conv2d(z, weight.squeeze().inverse().unsqueeze(2).unsqueeze(3))
-            # ops.check_nan_inf(z.data, 'Inv1X1 Backward', True)
+            
+            
+            # --- 修正点 ---
+            # .squeeze() をより安全な .squeeze(-1).squeeze(-1) に変更
+            # これにより、weightの形状が (1, 1, 1, 1) でも (1, 1) の2次元行列が保証される
+            inv_weight = weight.squeeze(-1).squeeze(-1).inverse()
+            z = F.conv2d(z, inv_weight.unsqueeze(2).unsqueeze(3))
+            # --- 修正ここまで ---
             if ldj is not None:
                 ldj = ldj - h * w * torch.sum(self.w_s)
 
