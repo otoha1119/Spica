@@ -12,6 +12,15 @@ class DicomPairDataset(Dataset):
         :param hr_root_dir: HR画像が入っている大元のディレクトリパス
         :param lr_root_dir: LR画像が入っている大元のディレクトリパス
         """
+        self.patch_size_hr = patch_size_hr
+        self.patch_size_lr = patch_size_hr // scale if patch_size_hr and scale else 100
+        
+        print("-" * 50)
+        print(f"[データセット情報]")
+        print(f"  HRパッチサイズ: {self.patch_size_hr}px")
+        print(f"  LRパッチサイズ: {self.patch_size_lr}px  ({self.patch_size_hr} // {scale} で計算)")
+        print("-" * 50)
+        
         # HR用: サブディレクトリごとにDICOMファイルを収集
         self.hr_files_by_dir = {}
         for root, dirs, files in os.walk(hr_root_dir):
@@ -54,16 +63,17 @@ class DicomPairDataset(Dataset):
         hr_h, hr_w = hr_image.shape
         lr_h, lr_w = lr_image.shape
 
-        # LR: 100x100 のランダムクロップ
-        x_lr = random.randint(0, lr_w - 100)
-        y_lr = random.randint(0, lr_h - 100)
-        lr_crop = lr_image[y_lr : y_lr + 100, x_lr : x_lr + 100]
+        # LR: self.patch_size_lr を使ったランダムクロップ
+        x_lr = random.randint(0, lr_w - self.patch_size_lr)
+        y_lr = random.randint(0, lr_h - self.patch_size_lr)
+        lr_crop = lr_image[y_lr : y_lr + self.patch_size_lr, x_lr : x_lr + self.patch_size_lr]
 
-        # HR: 200x200 のランダムクロップ
-        x_hr = random.randint(0, hr_w - 200)
-        y_hr = random.randint(0, hr_h - 200)
-        hr_crop = hr_image[y_hr : y_hr + 200, x_hr : x_hr + 200]
-
+        # HR: self.patch_size_hr を使ったランダムクロップ
+        x_hr = random.randint(0, hr_w - self.patch_size_hr)
+        y_hr = random.randint(0, hr_h - self.patch_size_hr)
+        hr_crop = hr_image[y_hr : y_hr + self.patch_size_hr, x_hr : x_hr + self.patch_size_hr]
+        
+        
         # 正規化 (0〜1 スケーリング)
         hr_crop = (hr_crop + 2048.0) / 6143.0
         lr_crop = (lr_crop + 2048.0) / 6143.0
@@ -71,5 +81,9 @@ class DicomPairDataset(Dataset):
         # テンソルに変換しチャネル次元追加
         hr_tensor = torch.from_numpy(hr_crop).unsqueeze(0)
         lr_tensor = torch.from_numpy(lr_crop).unsqueeze(0)
+        
+        # 0以下の値が現れた場合に、全て0に置き換える
+        hr_tensor = torch.clamp(hr_tensor, min=0)
+        lr_tensor = torch.clamp(lr_tensor, min=0)
 
         return hr_tensor, lr_tensor
