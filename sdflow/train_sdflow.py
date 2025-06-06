@@ -5,6 +5,7 @@ import os
 import random
 import argparse
 from pathlib import Path
+from tqdm import tqdm
 
 import torch
 from torch.utils.data import DataLoader
@@ -101,10 +102,22 @@ def main():
         disc_hr.train()
         disc_lr.train()
 
-        for idx, (hr_patch, lr_patch) in enumerate(dataloader):
+        # tqdmでデータローダーをラップし、エポック情報を表示
+        progress_bar = tqdm(dataloader, desc=f"Epoch {epoch}/{args.epochs}", leave=True)
+
+        for idx, (hr_patch, lr_patch) in enumerate(progress_bar):
+            # ループの最初に、このステップで表示する損失値を初期化
+            loss_G_val = 0.0
+            loss_D_val = 0.0
+
             hr_patch = hr_patch.to(device)  # [B,1,Hr,Hr]
             lr_patch = lr_patch.to(device)  # [B,1,Lr,Lr]
 
+            # -------------------------
+            # Generator (Flow) の学習
+            # -------------------------
+            optim_flow.zero_grad()
+            
             # Forward flow: encode HR and LR
             z_c_hr, z_h, logdet_h = model.encode_hr(hr_patch)
             z_c_lr, z_d, logdet_d = model.encode_lr(lr_patch)
@@ -112,22 +125,22 @@ def main():
             # Negative log-likelihood losses
             loss_nll_h = likelihood_loss(z_h, logdet_h)
             loss_nll_d = likelihood_loss(z_d, logdet_d)
-
             
-            loss_latent_gen  = latent_adv_loss.generator_loss(disc_content, z_c_hr.detach(), z_c_lr.detach())
-            loss_latent_disc = latent_adv_loss.disc_loss(disc_content,    z_c_hr.detach(), z_c_lr.detach())
+            # Latent adversarial loss (for generator)
+            loss_latent_gen  = latent_adv_loss.generator_loss(disc_content, z_c_hr, z_c_lr)
 
-
-
-            # Backward generation (mean outputs)
-            sr_mean = model.generate_sr(lr_patch, temp=0.0)
-            ds_mean = model.generate_ds(hr_patch, temp=0.0)
-
-            # Backward generation (sampling outputs)
+            # Backward generation (sampling outputs for adversarial loss)
             sr_rand = model.generate_sr(lr_patch, temp=0.8)
             ds_rand = model.generate_ds(hr_patch, temp=0.8)
 
-            # Image-space per-pixel and perceptual losses (mean)
+            # Image adversarial losses (for generator)
+            loss_adv_hr = image_adv_loss.generator_loss(disc_hr, fake=sr_rand)
+            loss_adv_lr = image_adv_loss.generator_loss(disc_lr, fake=ds_rand)
+
+            # Per-pixel and perceptual losses (use mean outputs for stability)
+            with torch.no_grad(): # この部分は勾配計算不要
+                sr_mean = model.generate_sr(lr_patch, temp=0.0)
+                ds_mean = model.generate_ds(hr_patch, temp=0.0)
             bicubic_hr = make_bicubic_hr(lr_patch, scale=args.scale)
             bicubic_lr = make_bicubic_lr(hr_patch, scale=args.scale)
             loss_pix_sr = pixel_loss(sr_mean, bicubic_hr)
@@ -135,18 +148,7 @@ def main():
             loss_pix_ds = pixel_loss(ds_mean, bicubic_lr)
             loss_per_ds = perceptual_loss(ds_mean, bicubic_lr)
 
-            # Image adversarial losses (use random outputs)
-            loss_adv_hr = image_adv_loss.generator_loss(disc_hr, fake=sr_rand)
-            loss_adv_lr = image_adv_loss.generator_loss(disc_lr, fake=ds_rand)
-
             # Total generator (flow) loss
-            # loss_G = (
-            #     loss_nll_h + loss_nll_d
-            #     + 0.05 * loss_latent
-            #     + 0.5 * (loss_pix_sr + loss_per_sr + loss_pix_ds + loss_per_ds)
-            #     + 0.1 * (loss_adv_hr + loss_adv_lr)
-            # )
-            
             loss_G = (
                 loss_nll_h + loss_nll_d
                 + 0.05 * loss_latent_gen
@@ -154,25 +156,32 @@ def main():
                 + 0.1 * (loss_adv_hr + loss_adv_lr)
             )
           
-            optim_flow.zero_grad()
             loss_G.backward()
             optim_flow.step()
-            
-             #memory kaihou!!!!!!!!
+            loss_G_val = loss_G.item() # 表示用に損失値を保存
+
             torch.cuda.empty_cache()
 
             # -------------------------
-            # Discriminator updates
+            # Discriminator の学習
             # -------------------------
             optim_disc.zero_grad()
+            
             # Content discriminator loss (real HR vs LR)
             loss_dc = latent_adv_loss.disc_loss(disc_content, z_c_hr.detach(), z_c_lr.detach())
+            
             # Image discriminator losses
             loss_dhr = image_adv_loss.disc_loss(disc_hr, real=hr_patch, fake=sr_rand.detach())
             loss_dlr = image_adv_loss.disc_loss(disc_lr, real=lr_patch, fake=ds_rand.detach())
+            
             loss_D = loss_dc + 0.5 * (loss_dhr + loss_dlr)
+            
             loss_D.backward()
             optim_disc.step()
+            loss_D_val = loss_D.item() # 表示用に損失値を保存
+
+            # プログレスバーに最新の損失値を表示
+            progress_bar.set_postfix(loss_G=loss_G_val, loss_D=loss_D_val)
 
             # Logging
             if global_step % args.log_interval == 0:
@@ -181,10 +190,12 @@ def main():
                 writer.add_scalar("Loss/NLL_H", loss_nll_h.item(), global_step)
                 writer.add_scalar("Loss/NLL_D", loss_nll_d.item(), global_step)
                 writer.add_image("LR_Input", lr_patch[0], global_step)
-                writer.add_image("SR_Mean", sr_mean[0].detach(), global_step)
-                writer.add_image("HR_Ref", bicubic_hr[0], global_step)
+                writer.add_image("SR_Output", sr_mean[0].detach(), global_step)
+                writer.add_image("HR_GroundTruth", hr_patch[0], global_step)
 
             global_step += 1
+
+        # --- end of batch loop ---
 
         # Scheduler step per epoch
         scheduler_flow.step()
@@ -194,11 +205,16 @@ def main():
         checkpoint_path = os.path.join(args.output_dir, f"sdflow_epoch{epoch}.pth")
         save_checkpoint(model, disc_content, disc_hr, disc_lr,
                         optim_flow, optim_disc, epoch, checkpoint_path)
-        print(f"[Epoch {epoch}] Checkpoint saved to {checkpoint_path}")
+        print(f"\n[Epoch {epoch}] Checkpoint saved to {checkpoint_path}")
 
         # Save example visualizations
-        save_visualizations(lr_patch[0], sr_mean[0].detach(), hr_patch[0],
-                            args.output_dir, epoch)
+        with torch.no_grad():
+            # 1番目のデータで可視化サンプルを生成
+            vis_lr = dataset[0][1].unsqueeze(0).to(device)
+            vis_hr = dataset[0][0].unsqueeze(0).to(device)
+            vis_sr = model.generate_sr(vis_lr, temp=0.0)
+            save_visualizations(vis_lr[0], vis_sr[0].detach(), vis_hr[0],
+                                args.output_dir, epoch)
 
     writer.close()
 

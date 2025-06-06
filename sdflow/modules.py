@@ -162,7 +162,7 @@ class ActNorm(nn.Module):
 
         if not reverse:
             if self.initialized.item() == 0:
-                print('Initializing ActNorm layer')
+                #print('Initializing ActNorm layer')
                 self.initialize(z)
                 self.initialized.fill_(1)
 

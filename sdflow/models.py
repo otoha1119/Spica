@@ -42,6 +42,7 @@ class HRFlow(nn.Module):
             z_c, z_h = torch.chunk(flow_input, 2, dim=1)
             
             
+            
             return z_c, z_h, ldj
         else:
             # 逆方向
