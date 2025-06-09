@@ -12,6 +12,7 @@ runs/
 
 DataSet
 
+checkpoints
 
 # ---------------- 環境ファイル ----------------
 # docker/.env
