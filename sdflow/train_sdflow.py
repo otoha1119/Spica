@@ -11,7 +11,7 @@ import torch
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
-from sdflow.dataset import DicomPairDataset
+from sdflow.Dataset import DicomPairDataset
 from sdflow.model_sdflow import SDFlowModel
 from sdflow.discriminators import ContentDiscriminator, ImageDiscriminator
 from sdflow.loss_sdflow import (
@@ -36,7 +36,7 @@ def parse_args():
     parser.add_argument("--output_dir", type=str, default="/workspace/checkpoints", help="Directory for checkpoints and logs")
     parser.add_argument("--patch_size_hr", type=int, default=128, help="Crop size for HR patches")
     parser.add_argument("--scale", type=int, default=2, help="Super-resolution scale factor")
-    parser.add_argument("--log_interval", type=int, default=20, help="Iterations between logging")
+    parser.add_argument("--log_interval", type=int, default=100, help="Iterations between logging")
     return parser.parse_args()
 
 

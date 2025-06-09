@@ -74,16 +74,29 @@ class DicomPairDataset(Dataset):
         hr_crop = hr_image[y_hr : y_hr + self.patch_size_hr, x_hr : x_hr + self.patch_size_hr]
         
         
-        # 正規化 (0〜1 スケーリング)
-        hr_crop = (hr_crop + 2048.0) / 6143.0
-        lr_crop = (lr_crop + 2048.0) / 6143.0
+        # 正規化 (0〜1 スケーリング) - 指定された固定値を使用
+        # HR画像の正規化
+        hr_min_val = 7121.0
+        hr_max_val = 9023.0
+        if (hr_max_val - hr_min_val) != 0:
+            hr_crop = (hr_crop - hr_min_val) / (hr_max_val - hr_min_val)
+        else:
+            hr_crop = np.zeros_like(hr_crop) # 範囲がゼロの場合
 
+        # LR画像の正規化
+        lr_min_val = -1003.0
+        lr_max_val = 476.0
+        if (lr_max_val - lr_min_val) != 0:
+            lr_crop = (lr_crop - lr_min_val) / (lr_max_val - lr_min_val)
+        else:
+            lr_crop = np.zeros_like(lr_crop) # 範囲がゼロの場合
+        
         # テンソルに変換しチャネル次元追加
         hr_tensor = torch.from_numpy(hr_crop).unsqueeze(0)
         lr_tensor = torch.from_numpy(lr_crop).unsqueeze(0)
         
-        # 0以下の値が現れた場合に、全て0に置き換える
-        hr_tensor = torch.clamp(hr_tensor, min=0)
-        lr_tensor = torch.clamp(lr_tensor, min=0)
+        # 0以下の値は0に、1を超える値は1にクリップ
+        hr_tensor = torch.clamp(hr_tensor, min=0, max=1)
+        lr_tensor = torch.clamp(lr_tensor, min=0, max=1)
 
         return hr_tensor, lr_tensor
