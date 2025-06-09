@@ -12,14 +12,16 @@ from sdflow.utils_sdflow import get_device
 def parse_args():
     """推論用の引数を解析します。"""
     parser = argparse.ArgumentParser(description="SDFlow Inference")
-    parser.add_argument("--checkpoint", type=str, required=True,
+    # required=True を削除し、defaultに直接パスを書き込む
+    parser.add_argument("--checkpoint", type=str, 
+                        default="/workspace/checkpoints/sdflow_epoch1.pth",
                         help="使用する学習済みモデルのチェックポイントファイル (.pth)")
-    parser.add_argument("--input", type=str, required=True,
+    parser.add_argument("--input", type=str,
+                        default="/workspace/DataSet/ImageCAS/001.ImgCast/IM_035.dcm",
                         help="高解像度化したい低解像度DICOM画像のパス")
     parser.add_argument("--output", type=str, default="result.png",
                         help="出力する高解像度画像ファイル名")
-    parser.add_argument("--scale", type=int, default=2,
-                        help="超解像のスケール（学習時と同じ値を指定）")
+    parser.add_argument("--scale", type=int, default=2)
     return parser.parse_args()
 
 def main():
@@ -31,10 +33,10 @@ def main():
     print("モデルを初期化しています...")
     model = SDFlowModel(
         in_channels=1,
-        hidden_channels=32,  # エラーから判断すると、おそらく32
-        n_flows=3,           # ← 学習時と同じ値に修正してください
-        hf_blocks=4,         # ← 学習時と同じ値に修正してください
-        deg_blocks=2,        # ← 学習時と同じ値に修正してください
+        hidden_channels=64,  # エラーから判断すると、おそらく32
+        n_flows=4,           # ← 学習時と同じ値に修正してください
+        hf_blocks=8,         # ← 学習時と同じ値に修正してください
+        deg_blocks=4,        # ← 学習時と同じ値に修正してください
         deg_mixture=16,      # エラーから判断すると、おそらく16
         scale=args.scale
     ).to(device)
@@ -51,12 +53,18 @@ def main():
     hr_dicom = pydicom.dcmread(args.input)
     hr_image = hr_dicom.pixel_array.astype('float32')
 
-    # 学習時と同じ正規化を適用
-    hr_image_normalized = (hr_image + 2048.0) / 6143.0
+    lr_min_val = -1003.0
+    lr_max_val = 476.0
+    if (lr_max_val - lr_min_val) != 0:
+        hr_image_normalized = (hr_image - lr_min_val) / (lr_max_val - lr_min_val)
+    else:
+        hr_image_normalized = np.zeros_like(hr_image) # 範囲がゼロの場合
     
     # PyTorchテンソルに変換し、バッチ次元とチャンネル次元を追加 [H, W] -> [1, 1, H, W]
     lr_tensor = torch.from_numpy(hr_image_normalized).unsqueeze(0).unsqueeze(0).to(device)
-    lr_tensor = torch.clamp(lr_tensor, min=0) # 念のためクリッピング
+    
+    # 0-1の範囲にクリッピング
+    lr_tensor = torch.clamp(lr_tensor, min=0, max=1)
 
     # 4. 推論を実行
     print("高解像度化処理を実行中...")
