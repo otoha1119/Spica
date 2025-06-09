@@ -34,7 +34,7 @@ def parse_args():
     parser.add_argument("--epochs", type=int, default=100, help="Number of epochs")
     parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate for flows and discriminators")
     parser.add_argument("--output_dir", type=str, default="/workspace/checkpoints", help="Directory for checkpoints and logs")
-    parser.add_argument("--patch_size_hr", type=int, default=100, help="Crop size for HR patches")
+    parser.add_argument("--patch_size_hr", type=int, default=128, help="Crop size for HR patches")
     parser.add_argument("--scale", type=int, default=2, help="Super-resolution scale factor")
     parser.add_argument("--log_interval", type=int, default=20, help="Iterations between logging")
     return parser.parse_args()
@@ -59,9 +59,9 @@ def main():
                             shuffle=True, num_workers=8, pin_memory=True)
 
     # Models
-    model = SDFlowModel(in_channels=1, hidden_channels=32,
-                        n_levels=3, n_flows=3,
-                        hf_blocks=4, deg_blocks=2,
+    model = SDFlowModel(in_channels=1, hidden_channels=64,
+                        n_levels=3, n_flows=4,
+                        hf_blocks=8, deg_blocks=4,
                         deg_mixture=16,
                         scale=args.scale).to(device)
 

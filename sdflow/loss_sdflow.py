@@ -5,6 +5,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torchvision import models
+from torchvision.models import VGG19_Weights
 import math  # 追加で math モジュールを使用
 
 
@@ -119,7 +120,8 @@ class PerceptualLoss(nn.Module):
     def __init__(self, layer_idx=21):
         super().__init__()
         # 事前学習済み VGG19 の特徴抽出部分を参照
-        vgg = models.vgg19(pretrained=True).features
+        weights = VGG19_Weights.DEFAULT 
+        vgg = models.vgg19(weights=weights).features
         # layer_idx 番目までのサブシーケンスを取得し eval モードに設定
         self.feature_extractor = nn.Sequential(*list(vgg.children())[:layer_idx]).eval()
         for param in self.feature_extractor.parameters():
