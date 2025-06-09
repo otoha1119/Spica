@@ -11,6 +11,9 @@ import torch
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
+from torchvision.utils import make_grid     
+import torch.nn.functional as F 
+
 from sdflow.Dataset import DicomPairDataset
 from sdflow.model_sdflow import SDFlowModel
 from sdflow.discriminators import ContentDiscriminator, ImageDiscriminator
@@ -184,14 +187,21 @@ def main():
             progress_bar.set_postfix(loss_G=loss_G_val, loss_D=loss_D_val)
 
             # Logging
-            if global_step % args.log_interval == 0:
+            if global_step % args.log_interval == 0:    
+                lr_resized = F.interpolate(lr_patch, size=sr_mean.shape[-2:], mode='bicubic', align_corners=False)
+                # 2枚の画像を横に並べたグリッド画像を作成
+                image_grid = make_grid([lr_resized[0], sr_mean[0].detach()], nrow=2, normalize=True)
+                writer.add_image("Comparison/Input_LR_and_Output_SR", image_grid, global_step)
+                writer.add_image("HR_GroundTruth", hr_patch[0], global_step)
+                
                 writer.add_scalar("Loss/Gen_Total", loss_G.item(), global_step)
                 writer.add_scalar("Loss/Disc_Total", loss_D.item(), global_step)
                 writer.add_scalar("Loss/NLL_H", loss_nll_h.item(), global_step)
                 writer.add_scalar("Loss/NLL_D", loss_nll_d.item(), global_step)
-                writer.add_image("LR_Input", lr_patch[0], global_step)
-                writer.add_image("SR_Output", sr_mean[0].detach(), global_step)
-                writer.add_image("HR_GroundTruth", hr_patch[0], global_step)
+                
+                
+                
+                
 
             global_step += 1
 
