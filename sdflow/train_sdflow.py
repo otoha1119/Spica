@@ -197,11 +197,7 @@ def main():
                 writer.add_scalar("Loss/Gen_Total", loss_G.item(), global_step)
                 writer.add_scalar("Loss/Disc_Total", loss_D.item(), global_step)
                 writer.add_scalar("Loss/NLL_H", loss_nll_h.item(), global_step)
-                writer.add_scalar("Loss/NLL_D", loss_nll_d.item(), global_step)
-                
-                
-                
-                
+                writer.add_scalar("Loss/NLL_D", loss_nll_d.item(), global_step)      
 
             global_step += 1
 
