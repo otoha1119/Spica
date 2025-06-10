@@ -36,6 +36,7 @@ def parse_args():
     parser.add_argument("--batch_size", type=int, default=2, help="Batch size per GPU")
     parser.add_argument("--epochs", type=int, default=100, help="Number of epochs")
     parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate for flows and discriminators")
+     parser.add_argument("--lr_disc", type=float, default=1e-5, help="Learning rate for discriminators")
     parser.add_argument("--output_dir", type=str, default="/workspace/checkpoints", help="Directory for checkpoints and logs")
     parser.add_argument("--patch_size_hr", type=int, default=128, help="Crop size for HR patches")
     parser.add_argument("--scale", type=int, default=2, help="Super-resolution scale factor")
@@ -80,12 +81,13 @@ def main():
         list(disc_content.parameters()) +
         list(disc_hr.parameters()) +
         list(disc_lr.parameters()),
-        lr=args.lr, betas=(0.9, 0.999)
+        lr=args.lr_disc, betas=(0.9, 0.999)
     )
 
     # Learning rate schedulers
     total_steps = len(dataloader) * args.epochs
-    milestones = [total_steps // 4, total_steps // 2, total_steps * 3 // 4]
+    #milestones = [total_steps // 4, total_steps // 2, total_steps * 3 // 4]
+    milestones = [int(total_steps * 0.5), int(total_steps * 0.75), int(total_steps * 0.9), int(total_steps * 0.95)]
     scheduler_flow = torch.optim.lr_scheduler.MultiStepLR(optim_flow,
                                                           milestones=milestones, gamma=0.5)
     scheduler_disc = torch.optim.lr_scheduler.MultiStepLR(optim_disc,
