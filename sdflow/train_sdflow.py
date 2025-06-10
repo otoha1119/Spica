@@ -36,7 +36,7 @@ def parse_args():
     parser.add_argument("--batch_size", type=int, default=2, help="Batch size per GPU")
     parser.add_argument("--epochs", type=int, default=100, help="Number of epochs")
     parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate for flows and discriminators")
-     parser.add_argument("--lr_disc", type=float, default=1e-5, help="Learning rate for discriminators")
+    parser.add_argument("--lr_disc", type=float, default=1e-5, help="Learning rate for discriminators")
     parser.add_argument("--output_dir", type=str, default="/workspace/checkpoints", help="Directory for checkpoints and logs")
     parser.add_argument("--patch_size_hr", type=int, default=128, help="Crop size for HR patches")
     parser.add_argument("--scale", type=int, default=2, help="Super-resolution scale factor")
@@ -64,7 +64,7 @@ def main():
 
     # Models
     model = SDFlowModel(in_channels=1, hidden_channels=64,
-                        n_levels=3, n_flows=4,
+                        n_levels=3, n_flows=16,
                         hf_blocks=8, deg_blocks=4,
                         deg_mixture=16,
                         scale=args.scale).to(device)
