@@ -17,7 +17,7 @@ def parse_args():
                         default="/workspace/checkpoints/sdflow_epoch1.pth",
                         help="使用する学習済みモデルのチェックポイントファイル (.pth)")
     parser.add_argument("--input", type=str,
-                        default="/workspace/DataSet/ImageCAS/001.ImgCast/IM_035.dcm",
+                        default="/workspace/DataSet/ImageCAS/001.ImgCast/IM_091.dcm",
                         help="高解像度化したい低解像度DICOM画像のパス")
     parser.add_argument("--output", type=str, default="result.png",
                         help="出力する高解像度画像ファイル名")
