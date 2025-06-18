@@ -32,7 +32,7 @@ def parse_args():
     parser.add_argument("--lr_root", type=str,
                         default="/workspace/DataSet/ImageCAS", help="LR DICOM directory")
     parser.add_argument("--hr_root", type=str,
-                        default="/workspace/DataSet/photonCT/PhotonCT1024", help="HR DICOM directory")
+                        default="/workspace/DataSet/photonCT/PhotonCT1024v2", help="HR DICOM directory")
     parser.add_argument("--batch_size", type=int, default=2, help="Batch size per GPU")
     parser.add_argument("--epochs", type=int, default=100, help="Number of epochs")
     parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate for flows and discriminators")

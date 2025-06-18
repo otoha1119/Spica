@@ -8,7 +8,6 @@ from torch.utils.data import Dataset
 class DicomPairDataset(Dataset):
     def __init__(self, hr_root_dir, lr_root_dir, patch_size_hr=None, scale=None):
         """
-        初期化処理：HRおよびLR画像のDICOMファイルパスを収集し、同じサブディレクトリ内からランダムに選べるようマッピングする
         :param hr_root_dir: HR画像が入っている大元のディレクトリパス
         :param lr_root_dir: LR画像が入っている大元のディレクトリパス
         """
@@ -75,21 +74,9 @@ class DicomPairDataset(Dataset):
         
         
         # 正規化 (0〜1 スケーリング) - 指定された固定値を使用
-        # HR画像の正規化
-        hr_min_val = 7121.0
-        hr_max_val = 9023.0
-        if (hr_max_val - hr_min_val) != 0:
-            hr_crop = (hr_crop - hr_min_val) / (hr_max_val - hr_min_val)
-        else:
-            hr_crop = np.zeros_like(hr_crop) # 範囲がゼロの場合
-
-        # LR画像の正規化
-        lr_min_val = -1003.0
-        lr_max_val = 476.0
-        if (lr_max_val - lr_min_val) != 0:
-            lr_crop = (lr_crop - lr_min_val) / (lr_max_val - lr_min_val)
-        else:
-            lr_crop = np.zeros_like(lr_crop) # 範囲がゼロの場合
+        # 正規化 (0〜1 スケーリング)
+        hr_crop = (hr_crop + 1024) / 4095
+        lr_crop = (lr_crop + 1024) / 4095
         
         # テンソルに変換しチャネル次元追加
         hr_tensor = torch.from_numpy(hr_crop).unsqueeze(0)
