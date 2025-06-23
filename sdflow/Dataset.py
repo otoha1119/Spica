@@ -86,4 +86,5 @@ class DicomPairDataset(Dataset):
         hr_tensor = torch.clamp(hr_tensor, min=0, max=1)
         lr_tensor = torch.clamp(lr_tensor, min=0, max=1)
 
-        return hr_tensor, lr_tensor
+        #return hr_tensor, lr_tensor
+        return hr_tensor, lr_tensor, hr_image, lr_image
