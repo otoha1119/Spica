@@ -75,16 +75,16 @@ class DicomPairDataset(Dataset):
         
         # 正規化 (0〜1 スケーリング) - 指定された固定値を使用
         # 正規化 (0〜1 スケーリング)
-        hr_crop = (hr_crop + 1024) / 4095
-        lr_crop = (lr_crop + 1024) / 4095
+        hr_crop_normalized = (hr_crop + 1024) / 4095
+        lr_crop_normalized = (lr_crop + 1024) / 4095
         
-        # テンソルに変換しチャネル次元追加
-        hr_tensor = torch.from_numpy(hr_crop).unsqueeze(0)
-        lr_tensor = torch.from_numpy(lr_crop).unsqueeze(0)
+        # テンソルに変換
+        hr_tensor = torch.from_numpy(hr_crop_normalized).unsqueeze(0)
+        lr_tensor = torch.from_numpy(lr_crop_normalized).unsqueeze(0)
         
         # 0以下の値は0に、1を超える値は1にクリップ
         hr_tensor = torch.clamp(hr_tensor, min=0, max=1)
         lr_tensor = torch.clamp(lr_tensor, min=0, max=1)
 
         #return hr_tensor, lr_tensor
-        return hr_tensor, lr_tensor, hr_image, lr_image
+        return hr_image, lr_image, hr_crop, lr_crop, hr_tensor, lr_tensor
