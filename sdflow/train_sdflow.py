@@ -6,6 +6,7 @@ import random
 import argparse
 from pathlib import Path
 from tqdm import tqdm
+import shutil
 
 import torch
 from torch.utils.data import DataLoader
@@ -48,9 +49,19 @@ def main():
     device = get_device()
 
     # Create output directories
-    os.makedirs(args.output_dir, exist_ok=True)
-    log_dir = os.path.join(args.output_dir, "logs")
-    os.makedirs(log_dir, exist_ok=True)
+    # 出力パスを定義
+    output_dir = args.output_dir
+    log_dir = os.path.join(output_dir, "logs")
+
+    # もし古いログディレクトリが存在していたら、中身ごと削除する
+    if os.path.exists(log_dir):
+        print(f"古いログディレクトリ {log_dir} を削除しています...")
+        shutil.rmtree(log_dir)
+    
+    # メインの出力ディレクトリを作成
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # SummaryWriterは、log_dirが存在しなければ自動的に作成してくれる
     writer = SummaryWriter(log_dir=log_dir)
 
     # Dataset and DataLoader (unpaired)
@@ -99,7 +110,16 @@ def main():
     image_adv_loss = ImageAdversarialLoss().to(device)
 
     global_step = 0
-    for idx, (hr_patch, lr_patch) in enumerate(progress_bar):
+    for epoch in range(1, args.epochs + 1):
+        model.train()
+        disc_content.train()
+        disc_hr.train()
+        disc_lr.train()
+
+        # tqdmでデータローダーをラップし、エポック情報を表示
+        progress_bar = tqdm(dataloader, desc=f"Epoch {epoch}/{args.epochs}", leave=True)
+
+        for idx, (hr_patch, lr_patch) in enumerate(progress_bar):
             # ループの最初に、このステップで表示する損失値を初期化
             loss_G_val = 0.0
             loss_D_val = 0.0
@@ -179,15 +199,24 @@ def main():
 
             # Logging
             if global_step % args.log_interval == 0:
-                lr_resized = F.interpolate(lr_patch, size=sr_mean.shape[-2:], mode='bicubic', align_corners=False)
-                image_grid = make_grid([lr_resized[0], sr_mean[0].detach()], nrow=2, normalize=True)
-                writer.add_image("Comparison/Input_LR_and_Output_SR", image_grid, global_step)
-                writer.add_image("HR_GroundTruth", hr_patch[0], global_step)
-                
-                writer.add_scalar("Loss/Gen_Total", loss_G.item(), global_step)
-                writer.add_scalar("Loss/Disc_Total", loss_D.item(), global_step)
-                writer.add_scalar("Loss/NLL_H", loss_nll_h.item(), global_step)
-                writer.add_scalar("Loss/NLL_D", loss_nll_d.item(), global_step)
+                with torch.no_grad():
+                    # --- ここから変更 ---
+
+                    # 1. 各画像を個別に、それぞれの解像度のまま記録する
+                    # タグの先頭にアルファベットを付けて表示順をコントロール (A→B→C)
+                    writer.add_image("A_Input/LR", lr_patch[0], global_step)
+                    writer.add_image("B_Output/SR", sr_mean[0].detach(), global_step)
+                    writer.add_image("C_GroundTruth/HR", hr_patch[0], global_step)
+
+                    # 2. 画像の「細かい値の分布」をヒストグラムとして記録する
+                    writer.add_histogram("Value_Distribution/LR_Input", lr_patch, global_step)
+                    writer.add_histogram("Value_Distribution/SR_Output", sr_mean, global_step)
+
+                    # 3. Lossグラフの表示
+                    writer.add_scalar("D_Losses/Gen_Total", loss_G.item(), global_step)
+                    writer.add_scalar("D_Losses/Disc_Total", loss_D.item(), global_step)
+                    writer.add_scalar("D_Losses/NLL_H", loss_nll_h.item(), global_step)
+                    writer.add_scalar("D_Losses/NLL_D", loss_nll_d.item(), global_step)
 
             global_step += 1
 
