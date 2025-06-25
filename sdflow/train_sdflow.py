@@ -49,12 +49,9 @@ def main():
     args = parse_args()
     device = get_device()
 
-    # Create output directories
-    # 出力パスを定義
     output_dir = args.output_dir
     log_dir = os.path.join(output_dir, "logs")
 
-    # もし古いログディレクトリが存在していたら、中身ごと削除する
     if os.path.exists(log_dir):
         print(f"古いログディレクトリ {log_dir} を削除しています...")
         shutil.rmtree(log_dir)
@@ -125,8 +122,8 @@ def main():
             loss_G_val = 0.0
             loss_D_val = 0.0
 
-            hr_patch = hr_patch.to(device)
-            lr_patch = lr_patch.to(device)
+            hr_patch = hr_patch.to(device)  # [B,1,Hr,Hr]
+            lr_patch = lr_patch.to(device)  # [B,1,Lr,Lr]
 
             # -------------------------
             # Generator (Flow) の学習
@@ -144,7 +141,7 @@ def main():
             # Latent adversarial loss (for generator)
             loss_latent_gen  = latent_adv_loss.generator_loss(disc_content, z_c_hr, z_c_lr)
 
-            # Backward generation (for adversarial losses)
+            # Backward generation (sampling outputs for adversarial loss)
             sr_rand = model.generate_sr(lr_patch, temp=0.8)
             ds_rand = model.generate_ds(hr_patch, temp=0.8)
 
@@ -152,19 +149,16 @@ def main():
             loss_adv_hr = image_adv_loss.generator_loss(disc_hr, fake=sr_rand)
             loss_adv_lr = image_adv_loss.generator_loss(disc_lr, fake=ds_rand)
 
-            # --- ここからが修正箇所 ---
-            # Per-pixel and perceptual losses
-            # 勾配計算に含めるため、no_gradの外で生成する
-            sr_mean = model.generate_sr(lr_patch, temp=0.0)
-            ds_mean = model.generate_ds(hr_patch, temp=0.0)
-            
+            # Per-pixel and perceptual losses (use mean outputs for stability)
+            with torch.no_grad(): # この部分は勾配計算不要
+                sr_mean = model.generate_sr(lr_patch, temp=0.0)
+                ds_mean = model.generate_ds(hr_patch, temp=0.0)
             bicubic_hr = make_bicubic_hr(lr_patch, scale=args.scale)
             bicubic_lr = make_bicubic_lr(hr_patch, scale=args.scale)
             loss_pix_sr = pixel_loss(sr_mean, bicubic_hr)
             loss_per_sr = perceptual_loss(sr_mean, bicubic_hr)
             loss_pix_ds = pixel_loss(ds_mean, bicubic_lr)
             loss_per_ds = perceptual_loss(ds_mean, bicubic_lr)
-            # --- 修正ここまで ---
 
             # Total generator (flow) loss
             loss_G = (
@@ -176,7 +170,7 @@ def main():
           
             loss_G.backward()
             optim_flow.step()
-            loss_G_val = loss_G.item()
+            loss_G_val = loss_G.item() # 表示用に損失値を保存
 
             torch.cuda.empty_cache()
 
@@ -185,7 +179,10 @@ def main():
             # -------------------------
             optim_disc.zero_grad()
             
+            # Content discriminator loss (real HR vs LR)
             loss_dc = latent_adv_loss.disc_loss(disc_content, z_c_hr.detach(), z_c_lr.detach())
+            
+            # Image discriminator losses
             loss_dhr = image_adv_loss.disc_loss(disc_hr, real=hr_patch, fake=sr_rand.detach())
             loss_dlr = image_adv_loss.disc_loss(disc_lr, real=lr_patch, fake=ds_rand.detach())
             
@@ -193,12 +190,12 @@ def main():
             
             loss_D.backward()
             optim_disc.step()
-            loss_D_val = loss_D.item()
+            loss_D_val = loss_D.item() # 表示用に損失値を保存
 
             # プログレスバーに最新の損失値を表示
             progress_bar.set_postfix(loss_G=loss_G_val, loss_D=loss_D_val)
 
-            # Logging
+            # Logging        
             if global_step % args.log_interval == 0:
                 with torch.no_grad():
                     # --- ここから変更 ---

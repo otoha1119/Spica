@@ -10,7 +10,7 @@ def parse_args():
     """推論用の引数を解析します。"""
     parser = argparse.ArgumentParser(description="SDFlow Inference")
     parser.add_argument("--checkpoint", type=str, 
-                        default="/workspace/checkpoints/sdflow_epoch31.pth",
+                        default="/workspace/checkpoints/sdflow_epoch1.pth",
                         help="使用する学習済みモデルのチェックポイントファイル (.pth)")
     parser.add_argument("--input", type=str,
                         default="/workspace/DataSet/ImageCAS/001.ImgCast/IM_091.dcm",
