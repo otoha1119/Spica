@@ -1,3 +1,4 @@
+"""
 from math import log, pi, sqrt
 import numpy as np
 import torch
@@ -14,8 +15,23 @@ from scipy import linalg as la
 from sdflow.conditional_net import module_util as mutil
 from sdflow.conditional_net.RRDBNet import RRDB
 # =========================
+"""
 
 from sdflow import ops
+
+from math import log, pi, sqrt
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import torch.distributed as dist
+from scipy import linalg as la
+
+# --- 公式コードからの変更点 ---
+from sdflow.conditional_net import module_util as mutil
+from sdflow.conditional_net.RRDBNet import RRDB
+from sdflow import ops
+# --- 変更ここまで ---
 
 from einops import rearrange, reduce
 
@@ -141,19 +157,15 @@ class ActNorm(nn.Module):
     def initialize(self, z):
         with torch.no_grad():
             mean = torch.mean(z, dim=[0, 2, 3], keepdim=True)
+            dist.all_reduce(mean, dist.ReduceOp.SUM)
+            mean = mean / dist.get_world_size()
+
             var = torch.mean((z - mean) ** 2, dim=[0, 2, 3], keepdim=True)
             var = torch.where(var < 1e-4, torch.ones_like(var).detach(), var)
+            dist.all_reduce(var, dist.ReduceOp.SUM)
+            var = var / dist.get_world_size()
             log_std = torch.log(1. / (torch.sqrt(var) + 1e-6))
-
-            # マルチGPUの場合のみ同期を行う
-            if torch.distributed.is_available() and torch.distributed.is_initialized():
-                dist.all_reduce(mean, dist.ReduceOp.SUM)
-                dist.all_reduce(var, dist.ReduceOp.SUM)
-                world_size = dist.get_world_size()
-                mean = mean / world_size
-                var = var / world_size
-                log_std = torch.log(1. / (torch.sqrt(var) + 1e-6))
-
+            
             self.loc.data.copy_(-mean)
             self.log_scale.data.copy_(log_std)
 
@@ -162,10 +174,10 @@ class ActNorm(nn.Module):
 
         if not reverse:
             if self.initialized.item() == 0:
-                #print('Initializing ActNorm layer')
+                print('Initializing ActNorm layer')
                 self.initialize(z)
                 self.initialized.fill_(1)
-
+            
             z = torch.exp(self.log_scale) * (z + self.loc)
 
             if ldj is not None:
@@ -214,17 +226,11 @@ class Inv1x1Conv2d(nn.Module):
             z = F.conv2d(z, weight)
             ldj = ldj + h * w * torch.sum(self.w_s)
             # ops.check_nan_inf(ldj.data, 'Inv1X1 LDJ', True)
-
+        
         else:
             weight = self.calc_weight()
-            
-            
-            # --- 修正点 ---
-            # .squeeze() をより安全な .squeeze(-1).squeeze(-1) に変更
-            # これにより、weightの形状が (1, 1, 1, 1) でも (1, 1) の2次元行列が保証される
-            inv_weight = weight.squeeze(-1).squeeze(-1).inverse()
-            z = F.conv2d(z, inv_weight.unsqueeze(2).unsqueeze(3))
-            # --- 修正ここまで ---
+            z = F.conv2d(z, weight.squeeze().inverse().unsqueeze(2).unsqueeze(3))
+            # ops.check_nan_inf(z.data, 'Inv1X1 Backward', True)
             if ldj is not None:
                 ldj = ldj - h * w * torch.sum(self.w_s)
 
@@ -261,7 +267,7 @@ class ZeroConv2d(nn.Module):
 # class NNBlock(nn.Module):
 #     def __init__(self, in_channels, out_channels, hidden_channels, n_resblocks, with_zero_conv=False):
 #         super().__init__()
-#
+
 #         self.in_conv = nn.Sequential(nn.ReflectionPad2d(1), nn.Conv2d(in_channels, hidden_channels, 3), nn.LeakyReLU(0.2, inplace=True))
 #         layers = list()
 #         for _ in range(n_resblocks):
@@ -271,7 +277,7 @@ class ZeroConv2d(nn.Module):
 #             self.out_conv = ZeroConv2d(hidden_channels, out_channels)
 #         else:
 #             self.out_conv = nn.Conv2d(hidden_channels, out_channels, 1)
-#
+
 #         for m in self.in_conv:
 #             if isinstance(m, nn.Conv2d):
 #                 m.weight.data.normal_(0, 0.05)
@@ -283,12 +289,12 @@ class ZeroConv2d(nn.Module):
 #         if isinstance(self.out_conv, nn.Conv2d):
 #             self.out_conv.weight.data.normal_(0, 0.05)
 #             self.out_conv.bias.data.zero_()
-#
+    
 #     def forward(self, x):
 #         x = self.in_conv(x)
 #         x = x + self.trunk(x)
 #         x = self.out_conv(x)
-#
+
 #         return x
 
 
@@ -373,7 +379,7 @@ class AffineCoupling(nn.Module):
             # self.net = NNBlock(self.channels_a + condition_channels, self.channels_b * 2, hidden_channels, n_hidden_layers)
             self.net = FCN(self.channels_a + condition_channels, self.channels_b * 2, hidden_channels, hidden_layers)
         else:
-            # self.net = NNBlock(self.channels_a, self.channels_b * 2, hidden_channels, hidden_layers)
+            # self.net = NNBlock(self.channels_a, self.channels_b * 2, hidden_channels, n_hidden_layers)
             self.net = FCN(self.channels_a, self.channels_b * 2, hidden_channels, hidden_layers)
 
     def forward(self, z, ldj, u=None, reverse=False):
@@ -671,3 +677,4 @@ class LRImageEncoderFM(nn.Module):
             log_std = self.uncertain_conv(mf)
             return x.tanh(), log_std.clamp(-6, 3)
         return x
+

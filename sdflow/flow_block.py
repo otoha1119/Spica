@@ -2,112 +2,82 @@ import torch
 import torch.nn as nn
 from sdflow import modules as m  # ActNorm, Inv1x1Conv2d, AffineInjector, AffineCoupling など
 
-class Identity(nn.Module):
-    """何もしないモジュール。条件付き情報がない場合や最終ステップで使用"""
-    def forward(self, z, ldj, *args, reverse=False):
-        return z, ldj
+# import torch
+# import torch.nn as nn
+# import modules as m
 
-class FlowStep(nn.Module):
-    """
-    Flow の 1 つのステップ。
-    1) ActNorm → 2) Permutation (Inv1x1Conv) → 3) AffineInjector (条件付き注入) → 4) AffineCoupling
-    """
-    def __init__(
-        self,
-        z_channels,
-        hidden_layers,
-        hidden_channels,
-        permute='inv1x1',
-        condition_channels=None,
-        affine_split=0.5,
-        with_actnorm=True,
-        is_last=False
-    ):
+class FlowBlock(nn.Module):
+    def __init__(self, z_channels, hidden_layers, hidden_channels, n_steps, permute='inv1x1', condition_channels=None, is_squeeze=True, squzze_type='checkboard',
+    is_expand=False, expand_type='checkboard', is_split=False, split_size=None, affine_split=0.5, with_actnorm=True):
         super().__init__()
-        self.is_last = is_last
-        self.z_channels = z_channels
 
-        # 1) ActNorm
-        self.actnorm = m.ActNorm(z_channels) if with_actnorm else Identity()
-        # 2) Permutation
-        self.permute = m.Inv1x1Conv2d(z_channels) if permute == 'inv1x1' else Identity()
+        self.is_squeeze = is_squeeze
+        self.is_expand = is_expand
+        self.is_split = is_split
 
-        # 3) AffineInjector (条件付き注入)
-        if condition_channels is not None and z_channels > 0:
-            self.affine_injector = m.AffineInjector(
-                z_channels, hidden_layers, hidden_channels, condition_channels
-            )
-        else:
-            self.affine_injector = Identity()
+        assert squzze_type == expand_type
+        self.squeeze_transition = None
+        self.expand_transition = None
+        if is_squeeze:
+            if squzze_type == 'checkboard':
+                self.squeeze = m.CheckboardSqueeze()
+                self.squeeze_transition = m.TransitionBlock(z_channels * 4, with_actnorm=with_actnorm)
+            elif squzze_type == 'haar':
+                self.squeeze = m.HaarWaveletSqueeze(z_channels)
+            else:
+                raise NotImplemented('Not implemented squeeze type')
+        if is_expand:
+            if expand_type == 'checkboard':
+                self.expand = m.CheckboardExpand()
+                self.expand_transition = m.TransitionBlock(z_channels * 4 if self.is_squeeze else z_channels, with_actnorm=with_actnorm)
+            elif expand_type == 'haar':
+                self.expand = m.HaarWaveletExpand(z_channels if self.is_squeeze else z_channels // 4)
+            else:
+                raise NotImplemented('Not implemented expand type')
 
-        # 4) AffineCoupling (条件付き)
-        if not self.is_last and z_channels > 1 and condition_channels is not None:
-            self.affine_coupling = m.AffineCoupling(
-                z_channels,
-                hidden_layers,
-                hidden_channels,
-                condition_channels,
-                split_ratio=affine_split
-            )
-        else:
-            self.affine_coupling = Identity()
-
-    def forward(self, z, ldj, u=None, reverse=False):
+        self.steps = nn.ModuleList()
+        if is_squeeze: z_channels = z_channels * 4
+        for _ in range(n_steps):
+            self.steps.append(m.FlowStep(z_channels, hidden_layers, hidden_channels, permute, condition_channels, affine_split=affine_split, with_actnrom=with_actnorm))
+        if is_expand: z_channels = z_channels // 4
+        if is_split:
+            self.split = m.SplitFlow(z_channels, split_size, n_resblock=8)
+    
+    def forward(self, z, ldj, tau=0, u=None, reverse=False):
         if not reverse:
-            z, ldj = self.actnorm(z, ldj)
-            z, ldj = self.permute(z, ldj)
-            z, ldj = self.affine_injector(z, ldj, u)
-            z, ldj = self.affine_coupling(z, ldj, u)
-        else:
-            z, ldj = self.affine_coupling(z, ldj, u, reverse=True)
-            z, ldj = self.affine_injector(z, ldj, u, reverse=True)
-            z, ldj = self.permute(z, ldj, reverse=True)
-            z, ldj = self.actnorm(z, ldj, reverse=True)
-        return z, ldj
+            if self.is_squeeze:
+                z, ldj = self.squeeze(z, ldj)
+                if self.squeeze_transition:
+                    z, ldj = self.squeeze_transition(z, ldj)
 
-class Flow(nn.Module):
-    """
-    FlowStep を n_flows 個つなげたシーケンスラッ퍼。
-    順方向では (z, ldj) を返し、逆方向では z_out のみ返す。
-    """
-    def __init__(self, in_channels, hidden_channels, n_levels, n_flows):
-        super().__init__()
-        blocks = []
-        z_channels = in_channels
-        for i in range(n_flows):
-            is_last = (i == n_flows - 1)
-            blocks.append(
-                FlowStep(
-                    z_channels,
-                    hidden_layers=2,
-                    hidden_channels=hidden_channels,
-                    permute='inv1x1',
-                    condition_channels=None,
-                    affine_split=0.5,
-                    with_actnorm=True,
-                    is_last=is_last
-                )
-            )
-        self.flow = nn.ModuleList(blocks)
+            for step in self.steps:
+                z, ldj = step(z, ldj, u)
+            
+            if self.is_expand:
+                if self.expand_transition:
+                    z, ldj = self.expand_transition(z, ldj)
+                z, ldj = self.expand(z, ldj)
+            
+            if self.is_split:
+                z, ldj = self.split(z, ldj, tau)
 
-    def forward(self, x, reverse=False):
-        batch_size = x.size(0)
-        ldj = torch.zeros(batch_size, device=x.device)
-        if not reverse:
-            z = x
-            for layer in self.flow:
-                z, ldj = layer(z, ldj)
             return z, ldj
+
         else:
-            z = x
-            for layer in reversed(self.flow):
-                z, ldj = layer(z, ldj, reverse=True)
-            return z
+            if self.is_split:
+                z, ldj = self.split(z, ldj, tau, reverse=True)
+            
+            if self.is_expand:
+                z, ldj = self.expand(z, ldj, reverse=True)
+                if self.expand_transition:
+                    z, ldj = self.expand_transition(z, ldj, reverse=True)
+            
+            for step in self.steps[::-1]:
+                z, ldj = step(z, ldj, u, reverse=True)
+            
+            if self.is_squeeze:
+                if self.squeeze_transition:
+                    z, ldj = self.squeeze_transition(z, ldj, reverse=True)
+                z, ldj = self.squeeze(z, ldj, reverse=True)
 
-class Inv1x1Conv2d(nn.Module):
-    # ...（既存実装をそのまま使用）
-    pass
-
-class ZeroConv2d(nn.Module):
-    # ...（既存実装をそのまま使用）
-    pass
+            return z, ldj
