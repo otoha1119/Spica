@@ -156,14 +156,13 @@ class ActNorm(nn.Module):
 
     def initialize(self, z):
         with torch.no_grad():
+            # 分散学習用の処理を削除し、単一GPU用に修正
             mean = torch.mean(z, dim=[0, 2, 3], keepdim=True)
-            dist.all_reduce(mean, dist.ReduceOp.SUM)
-            mean = mean / dist.get_world_size()
-
             var = torch.mean((z - mean) ** 2, dim=[0, 2, 3], keepdim=True)
+            
+            # 非常に小さい分散値に対する安全策は維持
             var = torch.where(var < 1e-4, torch.ones_like(var).detach(), var)
-            dist.all_reduce(var, dist.ReduceOp.SUM)
-            var = var / dist.get_world_size()
+            
             log_std = torch.log(1. / (torch.sqrt(var) + 1e-6))
             
             self.loc.data.copy_(-mean)
@@ -174,7 +173,7 @@ class ActNorm(nn.Module):
 
         if not reverse:
             if self.initialized.item() == 0:
-                print('Initializing ActNorm layer')
+                #print('Initializing ActNorm layer')
                 self.initialize(z)
                 self.initialized.fill_(1)
             
@@ -533,12 +532,19 @@ class SplitFlow(nn.Module):
             za, zb = torch.split(z, [self.za_channels, self.zb_channels], dim=1)
             _, ldj = self.conditional_flow(zb, ldj, za.detach(), tau)
 
-            return za, ldj
+            # --- 修正：za (z_c) と zb (z_h) の両方を返すようにする ---
+            return za, zb, ldj
 
         else:
-            zb, ldj = self.conditional_flow(None, ldj, z.detach(), tau, reverse=True)
+            if isinstance(z, (list, tuple)):
+                za, zb = z
+            else:
+                # 論文のDegFlowのような使い方（z_cからz_hを生成）も一応残しておく
+                zb, ldj = self.conditional_flow(None, ldj, z.detach(), tau, reverse=True)
+                za = z
 
-            z = torch.cat([z, zb], dim=1)
+            # 2つの潜在変数をチャンネル次元で連結し、splitの逆操作を完了
+            z = torch.cat([za, zb], dim=1)
             ops.check_nan_inf(z, 'Split Backward')
             
         return z, ldj
