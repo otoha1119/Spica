@@ -73,7 +73,7 @@ def main():
     # Models
     model = SDFlowModel(in_channels=1, hidden_channels=64,
                         n_levels=3, n_flows=4,
-                        hf_blocks=8, deg_blocks=4,
+                        hf_blocks=8, deg_blocks=8,
                         deg_mixture=16,
                         scale=args.scale).to(device)
 
