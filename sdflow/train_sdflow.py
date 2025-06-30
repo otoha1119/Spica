@@ -120,6 +120,11 @@ def main():
             optim_flow.zero_grad()
             
             # --- 1. 順伝播 ---
+            """
+            HR画像とLR画像を入力として、論文で定義されている
+            様々な潜在変数 (z_c_hr, z_h, z_c_lr, z_d) と
+            対数行列式 (logdet_hr, logdet_hf, logdet_deg) を計算
+            """
             z_c_hr, z_h, logdet_hr = hr_flow(hr_patch, ldj=torch.zeros(hr_patch.size(0), device=device), reverse=False)
             
             z_lr_combined = lr_encoder(lr_patch)
@@ -129,25 +134,46 @@ def main():
             z_d_prime, logdet_deg = deg_flow_d(z_d, ldj=None, u=z_c_lr.detach(), reverse=False)
 
             # --- 2. ジェネレータ損失の計算 ---
+            # 式(14) NLL_y と 式(16) NLL_x 
             loss_nll = likelihood_loss(z_h_prime, logdet_hr + logdet_hf) + \
                        likelihood_loss(z_d_prime, logdet_deg)
+            
+            # 式(18) 潜在空間での敵対的損失を正しく計算しています。
             loss_latent_gen = latent_adv_loss.generator_loss(disc_content, z_c_hr, z_c_lr)
             
+            # 式(17) L_content に対応? 
             reconst_lr_from_hr, _ = content_decoder(z_c_hr, ldj=None, reverse=True)
             reconst_lr_from_lr, _ = content_decoder(z_c_lr, ldj=None, reverse=True)
             target_lr_from_hr = F.interpolate(hr_patch, scale_factor=1/args.scale, mode='bicubic', align_corners=False)
+            
+            # LPFとしてガウシアンブラーを適用
             reconst_lr_from_hr_blur = gaussian_blur(reconst_lr_from_hr, kernel_size=5)
             reconst_lr_from_lr_blur = gaussian_blur(reconst_lr_from_lr, kernel_size=5)
             target_lr_from_hr_blur = gaussian_blur(target_lr_from_hr, kernel_size=5)
             lr_patch_blur = gaussian_blur(lr_patch, kernel_size=5)
+            
+            # ピクセル損失部分の計算
             loss_content_pix = pixel_loss(reconst_lr_from_hr_blur, target_lr_from_hr_blur) + \
                                pixel_loss(reconst_lr_from_lr_blur, lr_patch_blur)
+            
+            #知覚損失部分の計算
             loss_content_per = perceptual_loss(reconst_lr_from_hr, target_lr_from_hr) + \
                                perceptual_loss(reconst_lr_from_lr, lr_patch)
+            
+            #式(17) 重みα=0.05を掛けて合計
             loss_content = loss_content_pix + 0.05 * loss_content_per
             
             # --- 3. 学習戦略の適用 (事前学習 vs 本学習) ---
-            loss_G = loss_nll + 10.0 * loss_content + 0.05 * loss_latent_gen
+            # 式(19) 全体に対応 
+            
+            # 各項の重みを設定
+            lambda_nll = 1.0         # 基準となる尤度損失
+            lambda_content = 10.0    # 見た目の構造を重視するため、強めに設定
+            lambda_domain = 0.05     # 学習を安定させるため、控えめに設定
+            loss_G = (lambda_nll * loss_nll) + \
+                    (lambda_content * loss_content) + \
+                    (lambda_domain * loss_latent_gen)
+                    
             sr_rand, ds_rand = None, None
 
             if global_step >= args.pretrain_steps:
@@ -155,12 +181,24 @@ def main():
                 z_h_sampled, _ = deg_flow_h(None, u=z_c_lr.detach(), reverse=True, tau=0.8)
                 sr_rand, _ = hr_flow(z_c_lr.detach(), ldj=None, u_hf=z_h_sampled, reverse=True)
                 ds_rand, _ = content_decoder(z_c_hr.detach(), ldj=None, reverse=True)
-
-                loss_adv_hr = image_adv_loss.generator_loss(disc_hr, fake=sr_rand)
-                loss_adv_lr = image_adv_loss.generator_loss(disc_lr, fake=ds_rand)
+                
+                # L_pixの計算
                 loss_pix_sr = pixel_loss(sr_rand, F.interpolate(lr_patch, scale_factor=args.scale, mode='bicubic', align_corners=False))
                 loss_pix_ds = pixel_loss(ds_rand, lr_patch)
-                loss_G += 0.1 * (loss_adv_hr + loss_adv_lr) + 0.5 * (loss_pix_sr + loss_pix_ds)
+                
+                # L_perの計算
+                loss_per_sr = perceptual_loss(sr_rand, hr_patch) # SR画像と本物のHR画像を比較
+                loss_per_ds = perceptual_loss(ds_rand, lr_patch) # DS画像と本物のLR画像を比較
+                
+                # L_GANの計算
+                loss_adv_hr = image_adv_loss.generator_loss(disc_hr, fake=sr_rand)
+                loss_adv_lr = image_adv_loss.generator_loss(disc_lr, fake=ds_rand)
+                
+                # 論文指定の重み λ_per=0.5 を使って、知覚損失を加算する
+                loss_G += 0.5 * (loss_pix_sr + loss_pix_ds) + \
+                          0.5 * (loss_per_sr + loss_per_ds) + \
+                          0.1 * (loss_adv_hr + loss_adv_lr)
+                          
 
             # --- 4. ジェネレータのパラメータ更新 ---
             loss_G.backward()
