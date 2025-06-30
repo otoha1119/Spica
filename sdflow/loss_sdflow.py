@@ -26,8 +26,8 @@ def gaussian_logprob(z, mean, logvar):
 
 class LikelihoodLoss(nn.Module):
     """
-    正規フローの負対数尤度 (Negative Log-Likelihood) を計算する損失関数。
-    forward(z, logdet) のシグネチャで呼び出されます。
+    NLL (Negative Log Likelihood) 損失
+    論文(14)式
     """
     def __init__(self):
         super().__init__()
@@ -52,44 +52,48 @@ class LikelihoodLoss(nn.Module):
 
 class LatentAdversarialLoss(nn.Module):
     """
-    潜在空間 (z_c) に対する敵対損失 (Adversarial Loss)。
-    Discriminator D を使って、HR 側と LR 側の特徴量を識別します。
+    潜在空間 (z_c) に対する敵対的損失 (Adversarial Loss)。
+    論文の式(18) L_domain に基づいて修正。
     """
-    def __init__(self):
+    def __init__(self, beta1=0.05):
         super().__init__()
         self.mse = nn.MSELoss()
+        # 論文の正則化項の重みbeta1を初期化
+        self.beta1 = beta1
 
     def generator_loss(self, D, z_c_hr, z_c_lr):
         """
-        ジェネレータ側の損失: D(z_c_hr) → 0 (偽物), D(z_c_lr) → 1 (本物)
-        Args:
-            D (nn.Module): 潜在判別器
-            z_c_hr (Tensor): HR 側の潜在特徴 (B, C, H, W)
-            z_c_lr (Tensor): LR 側の潜在特徴 (B, C, H, W)
-        Returns:
-            Tensor: ジェネレータ損失スカラー
+        ジェネレータ側の損失。識別器を騙すことが目的。
+        識別器の目標（D(z_c_hr)→0, D(z_c_lr)→1）とは逆のラベルを目指す。
         """
         pred_hr = D(z_c_hr)
         pred_lr = D(z_c_lr)
-        loss_hr = self.mse(pred_hr, torch.zeros_like(pred_hr))
-        loss_lr = self.mse(pred_lr, torch.ones_like(pred_lr))
+        
+        # 論文の定義に合わせて、生成器は D(z_c_hr)→1, D(z_c_lr)→0 を目指す
+        loss_hr = self.mse(pred_hr, torch.ones_like(pred_hr))
+        loss_lr = self.mse(pred_lr, torch.zeros_like(pred_lr))
+        
         return 0.5 * (loss_hr + loss_lr)
 
     def disc_loss(self, D, z_c_hr, z_c_lr):
         """
-        識別器側の損失: D(z_c_hr) → 1 (本物), D(z_c_lr) → 0 (偽物)
-        Args:
-            D (nn.Module): 潜在判別器
-            z_c_hr (Tensor): HR 側の潜在特徴 (B, C, H, W)
-            z_c_lr (Tensor): LR 側の潜在特徴 (B, C, H, W)
-        Returns:
-            Tensor: 識別器損失スカラー
+        識別器側の損失。論文の式(18)を実装。
+        D(z_c_hr)→0, D(z_c_lr)→1 を目指す。
         """
         real_pred = D(z_c_hr)
         fake_pred = D(z_c_lr)
-        loss_real = self.mse(real_pred, torch.ones_like(real_pred))
-        loss_fake = self.mse(fake_pred, torch.zeros_like(fake_pred))
-        return 0.5 * (loss_real + loss_fake)
+        
+        # 論文(式18)に合わせて、HR側のターゲットを0に、LR側のターゲットを1に修正
+        loss_real = self.mse(real_pred, torch.zeros_like(real_pred))
+        loss_fake = self.mse(fake_pred, torch.ones_like(fake_pred))
+        
+        # 論文(式18)のL2正則化項を追加
+        l2_reg = z_c_hr.pow(2).mean() + z_c_lr.pow(2).mean()
+        
+        # adversarial lossと正則化項を合計
+        total_loss = 0.5 * (loss_real + loss_fake) + self.beta1 * l2_reg
+        
+        return total_loss
 
 
 class PixelLoss(nn.Module):

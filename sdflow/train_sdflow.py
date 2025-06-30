@@ -21,9 +21,8 @@ def parse_args():
     parser = argparse.ArgumentParser(description="SDFlow Training - Paper Aligned")
     parser.add_argument("--lr_root", type=str, default="/workspace/DataSet/ImageCAS", help="LR DICOM directory")
     parser.add_argument("--hr_root", type=str, default="/workspace/DataSet/photonCT/PhotonCT1024v2", help="HR DICOM directory")
-    parser.add_argument("--output_dir", type=str, default="/workspace/checkpoints_paper_ver", help="Directory for checkpoints and logs")
+    parser.add_argument("--output_dir", type=str, default="/workspace/checkpoints", help="Directory for checkpoints and logs")
     
-    # 論文とあなたの環境に合わせたパラメータ
     parser.add_argument("--batch_size", type=int, default=1, help="Batch size per GPU (Paper: 32)")
     parser.add_argument("--patch_size_hr", type=int, default=192, help="Crop size for HR patches (Paper: 192)")
     parser.add_argument("--epochs", type=int, default=300, help="Number of epochs")
@@ -153,7 +152,6 @@ def main():
 
             if global_step >= args.pretrain_steps:
                 # --- ステージ2：本学習 ---
-                # temp= を tau= に修正
                 z_h_sampled, _ = deg_flow_h(None, u=z_c_lr.detach(), reverse=True, tau=0.8)
                 sr_rand, _ = hr_flow(z_c_lr.detach(), ldj=None, u_hf=z_h_sampled, reverse=True)
                 ds_rand, _ = content_decoder(z_c_hr.detach(), ldj=None, reverse=True)
@@ -214,14 +212,30 @@ def main():
                 vis_lr = lr_patch
                 vis_hr = hr_patch
 
-            # --- 新しいモデル構成に合わせた呼び出し方に修正 ---
-            z_c_lr, _ = lr_encoder(vis_lr)
-            z_h_sampled = hf_flow(None, u=z_c_lr, reverse=True, temp=0.0) # temp=0.0で決定論的出力を得る
-            vis_sr, _ = hr_flow(z_c_lr, ldj=None, u_hf=z_h_sampled, reverse=True)
-            # --- 修正ここまで ---
+            # 学習ループ内と同じ、正しい手順で可視化用画像を生成する
+            # 1. まず結合された潜在変数を受け取る
+            z_lr_combined_vis = lr_encoder(vis_lr)
+            # 2. 次に2つに分割する
+            z_c_lr_vis, _ = torch.chunk(z_lr_combined_vis, 2, dim=1)
+            
+            # 3. 正しいモデルと引数でSR画像を生成する
+            z_h_sampled, _ = deg_flow_h(None, u=z_c_lr_vis, reverse=True, tau=0.0)
+            vis_sr, _ = hr_flow(z_c_lr_vis, ldj=None, u_hf=z_h_sampled, reverse=True)
 
             save_visualizations(vis_lr[0], vis_sr[0].detach(), vis_hr[0],
                                 args.output_dir, epoch)
+            
+        state_to_save = {
+            'hr_flow': hr_flow.state_dict(),
+            'content_decoder': content_decoder.state_dict(),
+            'deg_flow_h': deg_flow_h.state_dict(),
+            'deg_flow_d': deg_flow_d.state_dict(),
+            'lr_encoder': lr_encoder.state_dict(),
+        }
+
+        # PyTorchの標準機能で、辞書をファイルに保存
+        torch.save(state_to_save, checkpoint_path)
+        print(f"\n[Epoch {epoch}] Checkpoint saved to {checkpoint_path}")
 
 if __name__ == "__main__":
     main()

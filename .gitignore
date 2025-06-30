@@ -13,6 +13,7 @@ runs/
 DataSet
 
 checkpoints
+checkpoints_paper_ver
 
 # ---------------- 環境ファイル ----------------
 # docker/.env
