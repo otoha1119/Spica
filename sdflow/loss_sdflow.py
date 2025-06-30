@@ -28,6 +28,7 @@ class LikelihoodLoss(nn.Module):
     """
     NLL (Negative Log Likelihood) 損失
     論文(14)式
+
     """
     def __init__(self):
         super().__init__()
@@ -50,51 +51,50 @@ class LikelihoodLoss(nn.Module):
         return loss
 
 
+
 class LatentAdversarialLoss(nn.Module):
     """
     潜在空間 (z_c) に対する敵対的損失 (Adversarial Loss)。
     論文の式(18) L_domain に基づいて修正。
     """
-    def __init__(self, beta1=0.05):
+    def __init__(self, beta1=0.05, beta2=0.5): 
         super().__init__()
         self.mse = nn.MSELoss()
-        # 論文の正則化項の重みbeta1を初期化
         self.beta1 = beta1
+        self.beta2 = beta2
 
     def generator_loss(self, D, z_c_hr, z_c_lr):
         """
         ジェネレータ側の損失。識別器を騙すことが目的。
-        識別器の目標（D(z_c_hr)→0, D(z_c_lr)→1）とは逆のラベルを目指す。
         """
         pred_hr = D(z_c_hr)
         pred_lr = D(z_c_lr)
-        
-        # 論文の定義に合わせて、生成器は D(z_c_hr)→1, D(z_c_lr)→0 を目指す
         loss_hr = self.mse(pred_hr, torch.ones_like(pred_hr))
         loss_lr = self.mse(pred_lr, torch.zeros_like(pred_lr))
-        
-        return 0.5 * (loss_hr + loss_lr)
+        return 0.5 * (loss_hr + loss_lr) #0.5 で平均を取っている
 
-    def disc_loss(self, D, z_c_hr, z_c_lr):
+    def disc_loss(self, D, z_c_hr, z_c_lr, z_LR): # z_LRを引数に追加
         """
-        識別器側の損失。論文の式(18)を実装。
-        D(z_c_hr)→0, D(z_c_lr)→1 を目指す。
+        識別器側の損失。論文の式(18)を完全に実装。
         """
         real_pred = D(z_c_hr)
         fake_pred = D(z_c_lr)
         
-        # 論文(式18)に合わせて、HR側のターゲットを0に、LR側のターゲットを1に修正
         loss_real = self.mse(real_pred, torch.zeros_like(real_pred))
         loss_fake = self.mse(fake_pred, torch.ones_like(fake_pred))
+        adv_loss = 0.5 * (loss_real + loss_fake)
         
-        # 論文(式18)のL2正則化項を追加
+        # beta1の正則化項
         l2_reg = z_c_hr.pow(2).mean() + z_c_lr.pow(2).mean()
         
-        # adversarial lossと正則化項を合計
-        total_loss = 0.5 * (loss_real + loss_fake) + self.beta1 * l2_reg
+        # beta2の正則化項 ||z_LR - sg(z_c^LR)||_2
+        # sg(stop_gradient)は .detach() で実装
+        reconstruction_reg = F.mse_loss(z_LR, z_c_lr.detach())
+
+        # 3つの項を合計
+        total_loss = adv_loss + self.beta1 * l2_reg + self.beta2 * reconstruction_reg
         
         return total_loss
-
 
 class PixelLoss(nn.Module):
     """

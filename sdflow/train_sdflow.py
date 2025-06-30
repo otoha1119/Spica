@@ -171,12 +171,21 @@ def main():
             #  ディスクリミネーターの学習
             # =========================
             optim_disc.zero_grad()
-            loss_dc = latent_adv_loss.disc_loss(disc_content, z_c_hr.detach(), z_c_lr.detach())
+            
+            # 1. まず、どのステージでも共通の latent loss (loss_dc) を計算し、
+            #    loss_D を無条件に初期化する
+            with torch.no_grad():
+                z_LR = z_c_lr + z_d
+            loss_dc = latent_adv_loss.disc_loss(disc_content, z_c_hr.detach(), z_c_lr.detach(), z_LR.detach())
             loss_D = loss_dc
+
+            # 2. 本学習ステージに入ったら、追加で image loss を計算して loss_D に加算する
             if global_step >= args.pretrain_steps and sr_rand is not None and ds_rand is not None:
                 loss_dhr = image_adv_loss.disc_loss(disc_hr, real=hr_patch, fake=sr_rand.detach())
                 loss_dlr = image_adv_loss.disc_loss(disc_lr, real=lr_patch, fake=ds_rand.detach())
                 loss_D += 0.5 * (loss_dhr + loss_dlr)
+            
+            # 3. 最後に、初期化された loss_D で backprop を行う
             loss_D.backward()
             optim_disc.step()
             
