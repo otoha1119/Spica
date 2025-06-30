@@ -119,9 +119,10 @@ class PixelLoss(nn.Module):
 class PerceptualLoss(nn.Module):
     """
     VGG19 を用いた知覚的損失 (Perceptual Loss)。
-    VGG19 の特定層の特徴マップを抽出し、その差を L2 で計算します。
+    論文の指定に基づき、Conv5_4層の特徴量をL1損失で比較するように修正。
     """
-    def __init__(self, layer_idx=21):
+    
+    def __init__(self, layer_idx=36):
         super().__init__()
         # 事前学習済み VGG19 の特徴抽出部分を参照
         weights = VGG19_Weights.DEFAULT 
@@ -142,7 +143,8 @@ class PerceptualLoss(nn.Module):
         # 1チャネル→3チャネルに拡張
         feat_pred = self.feature_extractor(pred.repeat(1, 3, 1, 1))
         feat_target = self.feature_extractor(target.repeat(1, 3, 1, 1))
-        return F.mse_loss(feat_pred, feat_target)
+        # L1損失を計算
+        return F.l1_loss(feat_pred, feat_target)
 
 
 class ImageAdversarialLoss(nn.Module):
