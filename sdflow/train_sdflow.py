@@ -127,7 +127,11 @@ def main():
             z_c_lr = lr_encoder(lr_patch)
             z_x, logdet_x_given_y = deg_flow(lr_patch, ldj=torch.zeros(lr_patch.size(0), device=device), u=z_c.detach(), reverse=False)
             
+            
+            # 14式L_y + 16式L_x 
             loss_nll = likelihood_loss(z_h, logdet_y) + likelihood_loss(z_x, logdet_x_given_y)
+            
+            #18式L_domain
             loss_latent_gen = latent_adv_loss.generator_loss(disc_content, z_c, z_c_lr)
             
             
