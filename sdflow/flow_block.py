@@ -1,9 +1,6 @@
 import torch
 import torch.nn as nn
-
-# --- 変更点1: インポートパスをプロジェクトの構成に合わせる ---
 from sdflow import modules as m
-# --- 変更ここまで ---
 
 class FlowBlock(nn.Module):
     def __init__(self, z_channels, hidden_layers, hidden_channels, n_steps, permute='inv1x1', condition_channels=None, is_squeeze=True, squzze_type='checkboard',
@@ -37,8 +34,8 @@ class FlowBlock(nn.Module):
         self.steps = nn.ModuleList()
         if is_squeeze: z_channels = z_channels * 4
         for _ in range(n_steps):
-            # --- 変更点2: 引数名のタイポを修正 (with_actnrom -> with_actnorm) ---
-            self.steps.append(m.FlowStep(z_channels, hidden_layers, hidden_channels, permute, condition_channels, affine_split=affine_split, with_actnorm=with_actnorm))
+            # --- 修正点: 引数名を公開コードのタイポ(with_actnrom)に合わせる ---
+            self.steps.append(m.FlowStep(z_channels, hidden_layers, hidden_channels, permute, condition_channels, affine_split=affine_split, with_actnrom=with_actnorm))
             # --- 変更ここまで ---
         if is_expand: z_channels = z_channels // 4
         if is_split:
@@ -59,18 +56,14 @@ class FlowBlock(nn.Module):
                     z, ldj = self.expand_transition(z, ldj)
                 z, ldj = self.expand(z, ldj)
             
-            # --- 変更点3: SplitFlowからの3つの戻り値を正しく受け取り、そのまま返す ---
             if self.is_split:
-                # self.split は (z_c, z_h, ldj) を返すように修正済み
                 z_c, z_h, ldj = self.split(z, ldj, tau)
                 return z_c, z_h, ldj
-            # --- 変更ここまで ---
 
             return z, ldj
 
         else: # reverse
             if self.is_split:
-                # models.pyから [z_c, z_h] の形で渡されるzをそのままsplitに渡す
                 z, ldj = self.split(z, ldj, tau, reverse=True)
             
             if self.is_expand:

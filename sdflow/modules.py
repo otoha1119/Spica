@@ -392,12 +392,12 @@ class ConditionalFlow(nn.Module):
         factor = 4 if self.is_squeeze else 1
         
         if self.is_squeeze:
+            # self.cond_net から nn.PixelUnshuffle(2) と、それに伴うチャネル数調整を削除
             self.cond_net = nn.Sequential(
-                # --- 変更点4: `ConditionNet`に`condition_channels`を渡す ---
                 ConditionNet(condition_channels, nb=n_resblock),
-                # --- 変更ここまで ---
-                nn.PixelUnshuffle(2),
-                nn.Conv2d(64 * factor, 64, 1),
+                # nn.PixelUnshuffle(2), # この行を削除またはコメントアウト
+                # nn.Conv2d(64 * factor, 64, 1), # factorを削除
+                nn.Conv2d(64, 64, 1),
                 nn.LeakyReLU(0.2, inplace=True)
             )
             self.squeeze = CheckboardSqueeze()
