@@ -132,11 +132,11 @@ def main():
     scheduler_disc = torch.optim.lr_scheduler.MultiStepLR(optim_disc, milestones=milestones, gamma=0.5)
 
     # 損失関数
-    likelihood_loss = LikelihoodLoss().to(device)
-    latent_adv_loss = LatentAdversarialLoss().to(device)
-    pixel_loss = PixelLoss().to(device)
-    perceptual_loss = PerceptualLoss().to(device)
-    image_adv_loss = ImageAdversarialLoss().to(device)
+    likelihood_loss = LikelihoodLoss().to(device) # 尤度損失
+    latent_adv_loss = LatentAdversarialLoss().to(device) # 潜在敵対損失
+    pixel_loss = PixelLoss().to(device) # ピクセル損失
+    perceptual_loss = PerceptualLoss().to(device) # 知覚損失
+    image_adv_loss = ImageAdversarialLoss().to(device) # 画像敵対損失
 
     global_step = 0
     for epoch in range(1, args.epochs + 1):
@@ -156,13 +156,11 @@ def main():
             z_x, logdet_x_given_y = deg_flow(lr_patch, ldj=torch.zeros(lr_patch.size(0), device=device), u=z_c_hr.detach(), reverse=False)
             
             # --- 2. 損失の計算 ---
-            # NLL損失 (式16, 14)
+            
+            # 式16, 14
             loss_nll = likelihood_loss(z_h, logdet_y) + likelihood_loss(z_x, logdet_x_given_y)
             
-            # 潜在GAN損失 (式18のジェネレータ部分)
-            loss_latent_gen = latent_adv_loss.generator_loss(disc_content, z_c_hr, z_c_lr)
-            
-            # ### 変更点: 式(17)のL_contentを完全に実装 ###
+            # 式(17)
             # デコーダ f^-1_LR を使って、2つのz_cから画像を再構成
             reconst_from_hr = content_decoder(z_c_hr) # f^-1(z_HR_c, 0)
             reconst_from_lr = content_decoder(z_c_lr) # f^-1(z_LR_c, 0)
@@ -189,6 +187,9 @@ def main():
             loss_content_per_lr = perceptual_loss(reconst_from_lr, target_lr)
             
             loss_content = (loss_content_l1_hr + loss_content_l1_lr) + alpha * (loss_content_per_hr + loss_content_per_lr)
+            
+            # 潜在GAN損失 (式18のジェネレータ部分)
+            loss_latent_gen = latent_adv_loss.generator_loss(disc_content, z_c_hr, z_c_lr)
 
             # --- 3. 論文の式(19)に従い、全体損失(Forward loss)を計算 ---
             # 論文の重み係数 (λ) は公開されていないため、一般的な値で設定
