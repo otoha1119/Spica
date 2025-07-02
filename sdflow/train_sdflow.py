@@ -83,7 +83,6 @@ def main():
     dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, num_workers=8, pin_memory=True)
 
     in_channels = 1
-    # --- 修正: HRFlowのsplit_size=4に合わせて、z_cのチャネル数を正しく12に計算する ---
     z_c_channels = (in_channels * 4 * 4) - 4 
     
     hr_flow = HRFlow().to(device)
@@ -131,8 +130,6 @@ def main():
             loss_nll = likelihood_loss(z_h, logdet_y) + likelihood_loss(z_x, logdet_x_given_y)
             loss_latent_gen = latent_adv_loss.generator_loss(disc_content, z_c, z_c_lr)
             
-            # --- 変更点: 矛盾の原因となっていたloss_contentの計算を完全に削除 ---
-            # loss_content = ... (関連する計算をすべて削除)
             
             # 式(19) 全体損失 (事前学習段階) - loss_contentの項を削除
             loss_G = 1.0 * loss_nll + 0.05 * loss_latent_gen
@@ -200,18 +197,33 @@ def main():
         scheduler_flow.step()
         scheduler_disc.step()
         
-        # エポックごとのチェックポイント保存 (変更なし)
-        # ... (チェックポイント保存ロジックは省略せずにここに記述) ...
-        # (save_checkpoint関数を呼び出すように変更)
+        # --- 変更点: 新しいsave_checkpoint関数に合わせて呼び出し方を修正 ---
+        # 可視化処理は変更なし
+        with torch.no_grad():
+            z_c_lr_vis = lr_encoder(lr_patch)
+            vis_sampled_h = torch.randn_like(z_h)
+            vis_sr_input = [z_c_lr_vis, vis_sampled_h]
+            sr_vis, _ = hr_flow(vis_sr_input, ldj=None, reverse=True)
+            save_visualizations(lr_patch[0], sr_vis[0].detach(), hr_patch[0], args.output_dir, epoch)
+            
+        # 保存するモデルとオプティマイザを辞書にまとめる
+        models_to_save = {
+            'hr_flow': hr_flow,
+            'deg_flow': deg_flow,
+            'lr_encoder': lr_encoder,
+            'disc_content': disc_content,
+            'disc_hr': disc_hr,
+            'disc_lr': disc_lr
+        }
+        optims_to_save = {
+            'flow': optim_flow,
+            'disc': optim_disc
+        }
+
         checkpoint_path = os.path.join(args.output_dir, "checkpoints", f"epoch_{epoch}.pth")
-        save_checkpoint(
-            model={'hr_flow': hr_flow, 'content_decoder': content_decoder, 'deg_flow': deg_flow, 'lr_encoder': lr_encoder},
-            optim_flow=optim_flow,
-            optim_disc=optim_disc,
-            epoch=epoch,
-            path=checkpoint_path
-        )
+        save_checkpoint(models_to_save, optims_to_save, epoch, checkpoint_path)
         print(f"\n[Epoch {epoch}] Checkpoint saved to {checkpoint_path}")
+        # --- 変更ここまで ---
 
 if __name__ == "__main__":
     main()
