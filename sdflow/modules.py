@@ -154,7 +154,6 @@ class ActNorm(nn.Module):
 
         if not reverse:
             if self.initialized.item() == 0:
-                # print('Initializing ActNorm layer') # 必要に応じてコメント解除
                 self.initialize(z)
                 self.initialized.fill_(1)
             
@@ -162,7 +161,6 @@ class ActNorm(nn.Module):
 
             if ldj is not None:
                 ldj = ldj + h * w * torch.sum(self.log_scale)
-
         else:
             z = z * torch.exp(-self.log_scale) - self.loc
 
@@ -170,7 +168,6 @@ class ActNorm(nn.Module):
                 ldj = ldj - h * w * torch.sum(self.log_scale)
 
         return z, ldj
-
 
 class Inv1x1Conv2d(nn.Module):
     def __init__(self, in_channel):
@@ -512,6 +509,8 @@ class TransitionStep(nn.Module):
         self.inv_conv = Inv1x1Conv2d(in_channels)
     
     def forward(self, z, ldj, reverse=False):
+        z = z.to(self.inv_conv.w_l.device)
+
         if not reverse:
             z, ldj = self.actnorm(z, ldj)
             z, ldj = self.inv_conv(z, ldj)
