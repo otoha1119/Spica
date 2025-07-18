@@ -26,8 +26,9 @@ def gaussian_logprob(z, mean, logvar):
 
 class LikelihoodLoss(nn.Module):
     """
-    正規フローの負対数尤度 (Negative Log-Likelihood) を計算する損失関数。
-    forward(z, logdet) のシグネチャで呼び出されます。
+    NLL (Negative Log Likelihood) 損失
+    論文(14)式
+
     """
     def __init__(self):
         super().__init__()
@@ -50,47 +51,50 @@ class LikelihoodLoss(nn.Module):
         return loss
 
 
+
 class LatentAdversarialLoss(nn.Module):
     """
-    潜在空間 (z_c) に対する敵対損失 (Adversarial Loss)。
-    Discriminator D を使って、HR 側と LR 側の特徴量を識別します。
+    潜在空間 (z_c) に対する敵対的損失 (Adversarial Loss)。
+    論文の式(18) L_domain に基づいて修正。
     """
-    def __init__(self):
+    def __init__(self, beta1=0.05, beta2=0.5): 
         super().__init__()
         self.mse = nn.MSELoss()
+        self.beta1 = beta1
+        self.beta2 = beta2
 
     def generator_loss(self, D, z_c_hr, z_c_lr):
         """
-        ジェネレータ側の損失: D(z_c_hr) → 0 (偽物), D(z_c_lr) → 1 (本物)
-        Args:
-            D (nn.Module): 潜在判別器
-            z_c_hr (Tensor): HR 側の潜在特徴 (B, C, H, W)
-            z_c_lr (Tensor): LR 側の潜在特徴 (B, C, H, W)
-        Returns:
-            Tensor: ジェネレータ損失スカラー
+        ジェネレータ側の損失。識別器を騙すことが目的。
         """
         pred_hr = D(z_c_hr)
         pred_lr = D(z_c_lr)
-        loss_hr = self.mse(pred_hr, torch.zeros_like(pred_hr))
-        loss_lr = self.mse(pred_lr, torch.ones_like(pred_lr))
-        return 0.5 * (loss_hr + loss_lr)
+        loss_hr = self.mse(pred_hr, torch.ones_like(pred_hr))
+        loss_lr = self.mse(pred_lr, torch.zeros_like(pred_lr))
+        return 0.5 * (loss_hr + loss_lr) #0.5 で平均を取っている
 
-    def disc_loss(self, D, z_c_hr, z_c_lr):
+    def disc_loss(self, D, z_c_hr, z_c_lr, z_LR): # z_LRを引数に追加
         """
-        識別器側の損失: D(z_c_hr) → 1 (本物), D(z_c_lr) → 0 (偽物)
-        Args:
-            D (nn.Module): 潜在判別器
-            z_c_hr (Tensor): HR 側の潜在特徴 (B, C, H, W)
-            z_c_lr (Tensor): LR 側の潜在特徴 (B, C, H, W)
-        Returns:
-            Tensor: 識別器損失スカラー
+        識別器側の損失。論文の式(18)を完全に実装。
         """
         real_pred = D(z_c_hr)
         fake_pred = D(z_c_lr)
-        loss_real = self.mse(real_pred, torch.ones_like(real_pred))
-        loss_fake = self.mse(fake_pred, torch.zeros_like(fake_pred))
-        return 0.5 * (loss_real + loss_fake)
+        
+        loss_real = self.mse(real_pred, torch.zeros_like(real_pred))
+        loss_fake = self.mse(fake_pred, torch.ones_like(fake_pred))
+        adv_loss = 0.5 * (loss_real + loss_fake)
+        
+        # beta1の正則化項
+        l2_reg = z_c_hr.pow(2).mean() + z_c_lr.pow(2).mean()
+        
+        # beta2の正則化項 ||z_LR - sg(z_c^LR)||_2
+        # sg(stop_gradient)は .detach() で実装
+        reconstruction_reg = F.mse_loss(z_LR, z_c_lr.detach())
 
+        # 3つの項を合計
+        total_loss = adv_loss + self.beta1 * l2_reg + self.beta2 * reconstruction_reg
+        
+        return total_loss
 
 class PixelLoss(nn.Module):
     """
@@ -115,9 +119,10 @@ class PixelLoss(nn.Module):
 class PerceptualLoss(nn.Module):
     """
     VGG19 を用いた知覚的損失 (Perceptual Loss)。
-    VGG19 の特定層の特徴マップを抽出し、その差を L2 で計算します。
+    論文の指定に基づき、Conv5_4層の特徴量をL1損失で比較するように修正。
     """
-    def __init__(self, layer_idx=21):
+    
+    def __init__(self, layer_idx=36):
         super().__init__()
         # 事前学習済み VGG19 の特徴抽出部分を参照
         weights = VGG19_Weights.DEFAULT 
@@ -138,7 +143,8 @@ class PerceptualLoss(nn.Module):
         # 1チャネル→3チャネルに拡張
         feat_pred = self.feature_extractor(pred.repeat(1, 3, 1, 1))
         feat_target = self.feature_extractor(target.repeat(1, 3, 1, 1))
-        return F.mse_loss(feat_pred, feat_target)
+        # L1損失を計算
+        return F.l1_loss(feat_pred, feat_target)
 
 
 class ImageAdversarialLoss(nn.Module):
